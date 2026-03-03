@@ -52,13 +52,23 @@ jobs:
 
       - run: bun install
 
+      # Only set APPLE_SIGNING_IDENTITY when the secret is configured — setting it
+      # to an empty string causes codesign to fail rather than skip signing.
+      # To enable macOS code signing and notarization, add repository secrets:
+      #   APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+      #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+      - name: Configure macOS code signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -n "$SIGNING_IDENTITY" ]; then
+            echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          fi
+
       - name: Build
         run: bun run tauri build
-        # To enable macOS code signing and notarization, add repository secrets:
-        #   APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-        #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
