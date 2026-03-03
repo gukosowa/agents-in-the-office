@@ -5,6 +5,12 @@ A pixel-art office simulation where real AI agent sessions control NPC character
 **Supported agents:** Claude Code, Gemini CLI. Codex CLI support is planned once [tool hook infrastructure](https://github.com/openai/codex/discussions/2150) lands upstream.
 
 > Inspired by [pixel-agents](https://github.com/pablodelucca/pixel-agents) by pablodelucca — the initial idea and early draft that sparked this project.
+> I struggled a bit with the editor, which became the foundation of this project. I also wanted it to be independent from VS Code.
+
+<img width="49%" alt="screen" src="https://github.com/user-attachments/assets/1c87b0e9-a50d-4811-99fc-c39746ef6258" />
+<img width="49%" alt="editor" src="https://github.com/user-attachments/assets/9b878148-4028-4c2d-be7f-f0466291da28" />
+
+PS: The project is completely vibe coded
 
 ---
 
