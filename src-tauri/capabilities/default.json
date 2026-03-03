@@ -1,0 +1,49 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-always-on-top",
+    "dialog:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$HOME/.agents-in-the-office/**" },
+        { "path": "$HOME/.claude" },
+        { "path": "$HOME/.gemini" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [
+        { "path": "$HOME/.agents-in-the-office/**" },
+        { "path": "$HOME/.claude/**" },
+        { "path": "$HOME/.gemini/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        { "path": "$HOME/.agents-in-the-office/**" },
+        { "path": "$HOME/.claude/**" },
+        { "path": "$HOME/.gemini/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$HOME/.agents-in-the-office/**" }]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        { "path": "$HOME/.agents-in-the-office/**" },
+        { "path": "$HOME/.claude/**" },
+        { "path": "$HOME/.gemini/**" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- Dark background -->
+  <rect width="16" height="16" fill="#1e1e2e"/>
+
+  <!-- Monitor frame -->
+  <rect x="1" y="0" width="14" height="10" fill="#45475a" rx="0"/>
+  <rect x="1" y="0" width="14" height="1" fill="#585b70"/>
+
+  <!-- Screen -->
+  <rect x="2" y="1" width="12" height="8" fill="#1e6f8f"/>
+
+  <!-- Agent character on screen -->
+  <!-- Hair -->
+  <rect x="5" y="2" width="6" height="1" fill="#2c1810"/>
+  <rect x="4" y="3" width="8" height="1" fill="#2c1810"/>
+
+  <!-- Face -->
+  <rect x="5" y="4" width="6" height="3" fill="#c89b6e"/>
+  <!-- Hair sides -->
+  <rect x="4" y="4" width="1" height="2" fill="#2c1810"/>
+  <rect x="11" y="4" width="1" height="1" fill="#2c1810"/>
+
+  <!-- Eyes - white then pupil -->
+  <rect x="6" y="4" width="2" height="1" fill="#e8e8e8"/>
+  <rect x="8" y="4" width="2" height="1" fill="#e8e8e8"/>
+  <rect x="7" y="4" width="1" height="1" fill="#1a1a2e"/>
+  <rect x="9" y="4" width="1" height="1" fill="#1a1a2e"/>
+
+  <!-- Mouth -->
+  <rect x="7" y="6" width="2" height="1" fill="#a07850"/>
+
+  <!-- Body / shirt -->
+  <rect x="4" y="7" width="8" height="2" fill="#4477bb"/>
+  <!-- Collar -->
+  <rect x="7" y="7" width="2" height="1" fill="#e8e8e8"/>
+
+  <!-- Monitor stand -->
+  <rect x="6" y="10" width="4" height="1" fill="#45475a"/>
+  <rect x="5" y="11" width="6" height="1" fill="#585b70"/>
+
+  <!-- Desk surface -->
+  <rect x="0" y="12" width="16" height="1" fill="#a08050"/>
+  <rect x="0" y="13" width="16" height="1" fill="#8b6b3a"/>
+
+  <!-- Desk legs -->
+  <rect x="1" y="14" width="2" height="2" fill="#6b5030"/>
+  <rect x="13" y="14" width="2" height="2" fill="#6b5030"/>
+</svg>

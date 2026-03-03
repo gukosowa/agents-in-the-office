@@ -1,0 +1,187 @@
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useEditorStore } from '../stores/editorStore';
+import type { ToolType } from '../types';
+import {
+  Pen, Eraser, PaintBucket, Ban,
+  RectangleHorizontal, Slash,
+  Move, UserRound, Pipette,
+} from 'lucide-vue-next';
+
+const editorStore = useEditorStore();
+
+const drawTools: {
+  id: ToolType; icon: typeof Pen;
+  label: string; shortcut: string;
+}[] = [
+  { id: 'pen', icon: Pen, label: 'Pen', shortcut: 'Q' },
+  { id: 'eraser', icon: Eraser, label: 'Eraser', shortcut: 'W' },
+  { id: 'fill', icon: PaintBucket, label: 'Fill', shortcut: 'E' },
+];
+
+const otherTools: {
+  id: ToolType; icon: typeof Pen;
+  label: string; shortcut: string;
+}[] = [
+  { id: 'move', icon: Move, label: 'Move', shortcut: 'M' },
+  { id: 'spawn', icon: UserRound, label: 'Spawn NPC', shortcut: '' },
+];
+
+const rectApplicable = computed(
+  () => editorStore.selectedTool === 'pen'
+    || editorStore.selectedTool === 'eraser',
+);
+
+const lineApplicable = computed(
+  () => editorStore.selectedTool === 'pen'
+    || editorStore.selectedTool === 'eraser',
+);
+</script>
+
+<template>
+  <div
+    class="absolute left-80 top-10 bottom-0 w-11 z-10 border-r border-gray-700/50 bg-gray-800/60 backdrop-blur-md
+           flex flex-col items-center py-2 gap-1 overflow-x-hidden overflow-y-auto"
+  >
+    <!-- Draw tools -->
+    <button
+      v-for="tool in drawTools"
+      :key="tool.id"
+      :title="`${tool.label} (${tool.shortcut})`"
+      :class="
+        editorStore.selectedTool === tool.id
+          ? 'bg-blue-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="editorStore.setTool(tool.id)"
+    >
+      <component :is="tool.icon" :size="18" />
+      <span class="shortcut-badge">{{ tool.shortcut }}</span>
+    </button>
+
+    <!-- Pick / eyedropper -->
+    <button
+      title="Pick tile (C)"
+      :class="
+        editorStore.selectedTool === 'pick'
+          ? 'bg-blue-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="editorStore.setTool('pick')"
+    >
+      <Pipette :size="18" />
+      <span class="shortcut-badge">C</span>
+    </button>
+
+    <!-- Collision toggle -->
+    <button
+      :title="
+        editorStore.showCollision
+          ? 'Hide Collision (X)'
+          : 'Show Collision (X)'
+      "
+      :class="
+        editorStore.showCollision
+          ? 'bg-blue-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="
+        editorStore.showCollision = !editorStore.showCollision;
+        if (editorStore.showCollision)
+          editorStore.clearMultiSelections();
+      "
+    >
+      <Ban :size="18" />
+      <span class="shortcut-badge">X</span>
+    </button>
+
+    <div class="border-t border-gray-600 w-5 my-0.5" />
+
+    <!-- Rectangle mode toggle -->
+    <button
+      title="Rectangle mode (R)"
+      :class="[
+        editorStore.rectMode && rectApplicable
+          ? 'bg-purple-600 text-white'
+          : rectApplicable
+            ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            : 'bg-gray-800 text-gray-500 cursor-not-allowed',
+      ]"
+      class="relative p-1.5 rounded transition-colors"
+      :disabled="!rectApplicable"
+      @click="
+        editorStore.rectMode = !editorStore.rectMode;
+        editorStore.lineMode = false;
+      "
+    >
+      <RectangleHorizontal :size="18" />
+      <span class="shortcut-badge">R</span>
+    </button>
+
+    <!-- Line mode toggle -->
+    <button
+      title="Line mode (T)"
+      :class="[
+        editorStore.lineMode && lineApplicable
+          ? 'bg-purple-600 text-white'
+          : lineApplicable
+            ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            : 'bg-gray-800 text-gray-500 cursor-not-allowed',
+      ]"
+      class="relative p-1.5 rounded transition-colors"
+      :disabled="!lineApplicable"
+      @click="
+        editorStore.lineMode = !editorStore.lineMode;
+        editorStore.rectMode = false;
+      "
+    >
+      <Slash :size="18" />
+      <span class="shortcut-badge">T</span>
+    </button>
+
+    <div class="border-t border-gray-600 w-5 my-0.5" />
+
+    <!-- Other tools: select / move / spawn -->
+    <button
+      v-for="tool in otherTools"
+      :key="tool.id"
+      :title="
+        tool.shortcut
+          ? `${tool.label} (${tool.shortcut})`
+          : tool.label
+      "
+      :class="
+        editorStore.selectedTool === tool.id
+          ? 'bg-blue-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="editorStore.setTool(tool.id)"
+    >
+      <component :is="tool.icon" :size="18" />
+      <span
+        v-if="tool.shortcut"
+        class="shortcut-badge"
+      >{{ tool.shortcut }}</span>
+    </button>
+
+  </div>
+</template>
+
+<style scoped>
+.shortcut-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #a1a1aa;
+  pointer-events: none;
+}
+</style>
