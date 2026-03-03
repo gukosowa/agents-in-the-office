@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v0.1.0) — leave empty to skip release'
+        description: 'Release version (e.g. v0.1.0) — leave empty to auto-increment patch'
         required: false
   push:
     tags:
@@ -87,11 +87,26 @@ jobs:
   release:
     needs: [build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
 
     steps:
+      - name: Resolve release tag
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || echo "v0.0.0")
+            IFS='.' read -r major minor patch <<< "${latest#v}"
+            TAG="v${major}.${minor}.$((patch + 1))"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           path: artifacts
@@ -99,7 +114,6 @@ jobs:
 
       - name: Create GitHub release
         run: |
-          TAG="${{ inputs.version || github.ref_name }}"
           readarray -d '' -t files < <(find artifacts -type f -print0)
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
