@@ -188,7 +188,9 @@ src-tauri/src/
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Before opening a PR:
+Bug reports and pull requests are welcome. I work on this from time to time, so responses may take a while — but I do read everything and will get back to you.
+
+Before opening a PR:
 
 ```sh
 vue-tsc -b                                                        # type-check frontend
