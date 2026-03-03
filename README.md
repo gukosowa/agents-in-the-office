@@ -36,13 +36,51 @@ Agent events are persisted to IndexedDB so activity logs survive app restarts an
 
 ## Features
 
-- **Live agent visualization** — NPC behavior reflects what the AI agent is doing in real time
-- **Subagent support** — Task sub-agents spawn as distinct NPCs with badge overlays; transcript is polled for tool activity
-- **Tile map editor** — draw and save your own office layouts using tilesets and autotiles
-- **RPG Maker asset compatible** — load standard RPG Maker XP / VX / MV tilesets, autotile sheets, and character sprites directly (no conversion needed)
-- **Activity log** — floating panel shows a scrollable history of agent actions; events persisted in IndexedDB, survive restarts
-- **i18n** — NPC speech bubbles in English and German
-- **macOS terminal focus** — clicking an NPC raises its terminal window via the Accessibility API
+**Multi-agent support** — Claude Code and Gemini CLI. Codex CLI support is planned once [tool hook infrastructure](https://github.com/openai/codex/discussions/2150) lands upstream.
+
+**Live agent visualization** — NPC behavior mirrors what the agent is doing in real time: writing code sends it to a computer, reading files to the bookshelf, idle triggers wandering and conversations with nearby NPCs.
+
+**Approval alerts** — when an agent waits for user approval, the camera snaps to the NPC, a warning sign appears, and a red pulsing vignette draws your attention.
+
+**Subagent support** — subagents spawn as distinct NPCs with badge overlays; a line connects each subagent to its parent NPC. Transcripts are polled for live tool activity.
+
+**Prompt display** — each NPC shows the last user prompt above its head, making it easy to tell sessions apart when running multiple agents simultaneously.
+
+**One-click agent setup** — a built-in setup dialog installs the hook script and merges it into each agent's settings file automatically. No manual config required.
+
+**Tile map editor** — RPG Maker–style controls: pencil, rectangle, bucket fill, multi-tile selection. Depth layers (below / y-sorted / above), collision placement, autotiles (including wall autotiles), layers, undo/redo.
+
+**RPG Maker asset compatible** — load standard RPG Maker XP / VX Ace / MV tilesets, autotile sheets, and character sprites directly — no conversion needed.
+
+**Character editor** — configure sprite sheets per NPC: set animation regions, action regions, and a separate sprite for subagent NPCs.
+
+**NPC world interaction** — tiles can be marked as objects (computer, plant, chair, …). NPCs pathfind to the appropriate object for each tool. On idle, NPCs wander and start conversations with each other.
+
+**Agent doors** — NPCs enter through a configured door on spawn and exit through it when the session ends.
+
+**Shareable maps** — maps are saved as `.aito` files: all tile data, tilesets, and autotiles encoded as base64. Send one file to share a complete map.
+
+**Activity log** — floating panel showing a scrollable history of agent actions, persisted in IndexedDB across restarts.
+
+**Compact window** — can be pinned and sized small, ideal for placing in a corner of a secondary monitor.
+
+**i18n** — NPC speech bubbles in English and German.
+
+**macOS terminal focus** — clicking an NPC raises its terminal window via the Accessibility API.
+
+---
+
+## Installing a release
+
+Download the latest `.dmg` from the Releases page, open it, and drag **Agents in the Office.app** to your `/Applications` folder.
+
+Because the app is not code-signed, macOS Gatekeeper will block it on first launch. Run this once after installing to remove the quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Agents in the Office.app"
+```
+
+Then double-click to open normally.
 
 ---
 
