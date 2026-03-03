@@ -2,6 +2,10 @@ name: Build
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.1.0) — leave empty to skip release'
+        required: false
   push:
     tags:
       - 'v*'
@@ -83,7 +87,7 @@ jobs:
   release:
     needs: [build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
     permissions:
       contents: write
 
@@ -95,10 +99,11 @@ jobs:
 
       - name: Create GitHub release
         run: |
+          TAG="${{ inputs.version || github.ref_name }}"
           readarray -d '' -t files < <(find artifacts -type f -print0)
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
+            --title "$TAG" \
             --generate-notes \
             "${files[@]}"
         env:
