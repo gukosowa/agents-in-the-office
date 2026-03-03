@@ -758,6 +758,7 @@ onUnmounted(() => {
         <Plus :size="14" />
       </button>
     </div>
+    </div>
 
     <!-- Add autotile button when no autotiles exist -->
     <div
@@ -775,7 +776,6 @@ onUnmounted(() => {
         <Plus :size="12" />
         Autotile
       </button>
-      </div>
     </div>
 
     <!-- Toolbar: mode toggle + zoom -->
@@ -914,8 +914,13 @@ onUnmounted(() => {
         class="h-full flex items-center justify-center p-4
                text-center text-gray-500 text-sm"
       >
-        <span>
-          Click <kbd class="text-gray-400">{{ editorStore.activeSlot }}</kbd> below to upload a tileset image
+        <span class="flex flex-col gap-2 items-center">
+          <span>
+            Click <kbd class="text-gray-400">{{ editorStore.activeSlot }}</kbd> above to upload a tileset image
+          </span>
+          <span class="text-xs text-gray-600">
+            Right-click a tileset tab or autotile to edit or delete it
+          </span>
         </span>
       </div>
     </div>
