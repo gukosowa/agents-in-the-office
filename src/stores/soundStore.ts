@@ -196,6 +196,10 @@ export const useSoundStore = defineStore('sound', () => {
     return soundPacksDir;
   }
 
+  function getSessionPack(sessionId: string): string | undefined {
+    return sessionPacks.get(sessionId);
+  }
+
   // -------------------------------------------------------------------------
   // AudioContext helpers
   // -------------------------------------------------------------------------
@@ -322,5 +326,6 @@ export const useSoundStore = defineStore('sound', () => {
     getOrCreateAudioContext,
     getBufferCache,
     loadBuffer,
+    getSessionPack,
   };
 });
