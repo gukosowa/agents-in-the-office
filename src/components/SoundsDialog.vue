@@ -15,6 +15,8 @@ import {
   readFile,
   writeFile,
   exists,
+  rename,
+  remove,
 } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
@@ -121,38 +123,92 @@ async function onPackDeleted(name: string) {
   closeCtxMenu();
 }
 
-// ---- New pack ----
-const newPackName = ref('');
-const creatingPack = ref(false);
-const newPackInput = ref<HTMLInputElement | null>(null);
+// ---- New pack / inline rename ----
+const editingPackName = ref<string | null>(null);
+const editPackNameValue = ref('');
+const editPackInput = ref<HTMLInputElement | null>(null);
+const isNewPack = ref(false);
 
-function startCreatePack() {
-  creatingPack.value = true;
-  newPackName.value = '';
-  void nextTick(() => newPackInput.value?.focus());
+function generatePackName(): string {
+  const existingNames = new Set(soundStore.packs.map((p) => p.name));
+  const base = 'New Pack';
+  if (!existingNames.has(base)) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base} ${i}`;
+    if (!existingNames.has(candidate)) return candidate;
+  }
+  return `${base} ${Date.now()}`;
 }
 
-function cancelCreatePack() {
-  creatingPack.value = false;
-  newPackName.value = '';
-}
-
-async function confirmCreatePack() {
-  const packName = newPackName.value.trim();
-  if (!packName) return;
-  creatingPack.value = false;
-  newPackName.value = '';
+async function startCreatePack(): Promise<void> {
+  const packName = generatePackName();
   const baseDir = soundStore.getSoundPacksDir();
   const packPath = `${baseDir}/${packName}`;
   try {
     await mkdir(packPath, { recursive: true });
-    for (const eventType of AGENT_EVENT_TYPES) {
-      await mkdir(`${packPath}/${eventType}`, { recursive: true });
-    }
+    await soundStore.savePackManifest(packName, { sounds: [], assignments: [] });
     await soundStore.scanPacks();
     selectedPack.value = packName;
+    isNewPack.value = true;
+    editingPackName.value = packName;
+    editPackNameValue.value = packName;
+    void nextTick(() => editPackInput.value?.select());
   } catch (err) {
     console.error('[SoundsDialog] createNewPack failed', err);
+  }
+}
+
+async function confirmEditPackName(): Promise<void> {
+  const oldName = editingPackName.value;
+  if (!oldName) return;
+  const newName = editPackNameValue.value.trim();
+  editingPackName.value = null;
+  isNewPack.value = false;
+
+  if (!newName || newName === oldName) return;
+
+  const baseDir = soundStore.getSoundPacksDir();
+  try {
+    await rename(`${baseDir}/${oldName}`, `${baseDir}/${newName}`);
+    // Update activePacks
+    const idx = soundStore.config.activePacks.indexOf(oldName);
+    if (idx >= 0) soundStore.config.activePacks[idx] = newName;
+    // Move soundOverrides entries
+    const oldPrefix = `${oldName}/`;
+    const newPrefix = `${newName}/`;
+    for (const key of Object.keys(soundStore.config.soundOverrides)) {
+      if (key.startsWith(oldPrefix)) {
+        const filename = key.slice(oldPrefix.length);
+        soundStore.config.soundOverrides[`${newPrefix}${filename}`] =
+          soundStore.config.soundOverrides[key]!;
+        delete soundStore.config.soundOverrides[key];
+      }
+    }
+    await soundStore.saveConfig();
+    await soundStore.scanPacks();
+    if (selectedPack.value === oldName) selectedPack.value = newName;
+  } catch (err) {
+    console.error('[SoundsDialog] rename pack failed', err);
+  }
+}
+
+async function cancelEditPackName(): Promise<void> {
+  const oldName = editingPackName.value;
+  const wasNew = isNewPack.value;
+  editingPackName.value = null;
+  isNewPack.value = false;
+
+  if (wasNew && oldName) {
+    const baseDir = soundStore.getSoundPacksDir();
+    try {
+      await remove(`${baseDir}/${oldName}`, { recursive: true });
+      await soundStore.scanPacks();
+      if (selectedPack.value === oldName) {
+        selectedPack.value = soundStore.packs[0]?.name ?? null;
+      }
+    } catch (err) {
+      console.error('[SoundsDialog] cancel new pack failed', err);
+    }
   }
 }
 
@@ -673,39 +729,33 @@ watch(selectedPack, async (packName) => {
                   @click.stop
                   @change="togglePackActive(pack.name, ($event.target as HTMLInputElement).checked)"
                 />
-                <span class="text-sm text-gray-200 truncate flex-1">{{ pack.name }}</span>
+                <input
+                  v-if="editingPackName === pack.name"
+                  ref="editPackInput"
+                  v-model="editPackNameValue"
+                  class="flex-1 min-w-0 px-1 py-0.5 bg-gray-800 border border-indigo-400 rounded text-xs text-gray-200 outline-none"
+                  @click.stop
+                  @keydown.enter.prevent="confirmEditPackName"
+                  @keydown.escape.prevent="cancelEditPackName"
+                  @blur="confirmEditPackName"
+                />
+                <span v-else class="text-sm text-gray-200 truncate flex-1">{{ pack.name }}</span>
               </div>
             </div>
-            <!-- Buttons / new pack input -->
-            <div class="flex flex-col gap-1 p-2 border-t border-gray-700">
-              <div v-if="creatingPack" class="flex gap-1">
-                <input
-                  ref="newPackInput"
-                  v-model="newPackName"
-                  class="flex-1 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-gray-200 outline-none focus:border-indigo-400"
-                  placeholder="Pack name…"
-                  @keydown.enter="confirmCreatePack"
-                  @keydown.escape="cancelCreatePack"
-                />
-                <button
-                  class="px-2 py-1 bg-indigo-600/80 rounded hover:bg-indigo-500 text-xs text-white"
-                  @click="confirmCreatePack"
-                >OK</button>
-              </div>
-              <div class="flex gap-1">
-                <button
-                  class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
-                  @click="startCreatePack"
-                >
-                  New Pack
-                </button>
-                <button
-                  class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
-                  @click="openImportPicker"
-                >
-                  Import
-                </button>
-              </div>
+            <!-- Buttons -->
+            <div class="flex gap-1 p-2 border-t border-gray-700">
+              <button
+                class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                @click="startCreatePack"
+              >
+                New Pack
+              </button>
+              <button
+                class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                @click="openImportPicker"
+              >
+                Import
+              </button>
             </div>
           </div>
 
