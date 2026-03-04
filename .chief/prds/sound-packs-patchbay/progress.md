@@ -148,3 +148,17 @@
   - Common ZIP tools wrap files in a single top-level folder matching the ZIP filename — handle `stripPrefix` for that case
   - `showImportError` pattern with auto-dismiss timeout is reusable for other transient error messages in dialogs
 ---
+
+## 2026-03-04 - US-012
+- Implemented old pack migration via "Migrate to new format" context menu option
+- Packs without `manifest.json` show an amber "old" badge in the sidebar
+- `PackContextMenu` gains `hasManifest` prop and `migrated` event; shows "Migrate to new format" when `!hasManifest`
+- Migration logic: reads all subdirectories, maps folder names to `AgentEventType` for assignments, moves audio files to pack root, writes manifest.json, removes old subdirectories
+- Duplicate filenames handled: skips copy if file already exists at root
+- `ctxMenu` ref expanded to include `hasManifest` field for passing to context menu
+- **Files changed:** `src/components/PackContextMenu.vue`, `src/components/SoundsDialog.vue`
+- **Learnings for future iterations:**
+  - `PackInfo.hasManifest` already existed from `scanPacks()` — no store changes needed for detection
+  - Migration moves files individually (read + write + remove) since Tauri plugin-fs has no `rename` across directories on all platforms
+  - After migration, `scanPacks()` re-reads the pack and `hasManifest` becomes `true`, so the amber badge disappears automatically
+---

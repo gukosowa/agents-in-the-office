@@ -8,6 +8,8 @@ import {
   exists,
   readDir,
   readFile,
+  writeFile,
+  remove,
 } from '@tauri-apps/plugin-fs';
 import type { AgentEvent, AgentEventType } from '../drivers/types';
 
@@ -42,6 +44,8 @@ export interface SoundConfig {
   activePacks: string[];
   /** Per-sound overrides, key: "<packName>/<filename>" */
   soundOverrides: Record<string, { volume: number; enabled: boolean }>;
+  /** Event types hidden from the patchbay UI */
+  hiddenEvents: string[];
   /** Legacy field — read for migration only, not written on save */
   tracks?: Record<string, Record<string, TrackConfig>>;
 }
@@ -76,6 +80,7 @@ const DEFAULT_CONFIG: SoundConfig = {
   cooldownSeconds: 2,
   activePacks: [],
   soundOverrides: {},
+  hiddenEvents: [],
 };
 
 function migrateTracksToSoundOverrides(
@@ -196,6 +201,63 @@ export const useSoundStore = defineStore('sound', () => {
   // Pack scanning
   // -------------------------------------------------------------------------
 
+  async function autoMigratePack(
+    packName: string,
+    packPath: string,
+  ): Promise<PackManifest> {
+    const eventTypes = new Set<string>(AGENT_EVENT_TYPES);
+    const manifest: PackManifest = { sounds: [], assignments: [] };
+    const seenFiles = new Set<string>();
+    const dirsToRemove: string[] = [];
+
+    const entries = await readDir(packPath);
+    for (const entry of entries) {
+      if (!entry.isDirectory || entry.name === undefined) continue;
+      const folderName = entry.name;
+      const folderPath = `${packPath}/${folderName}`;
+      const isEventFolder = eventTypes.has(folderName);
+      const fileEntries = await readDir(folderPath);
+
+      for (const fileEntry of fileEntries) {
+        if (fileEntry.isDirectory || fileEntry.name === undefined) continue;
+        const filename = fileEntry.name;
+        if (!hasAudioExtension(filename)) continue;
+        const srcPath = `${folderPath}/${filename}`;
+        const dstPath = `${packPath}/${filename}`;
+
+        const alreadyAtRoot = await exists(dstPath);
+        if (!alreadyAtRoot) {
+          const data = await readFile(srcPath);
+          await writeFile(`${dstPath}`, data);
+        }
+        await remove(srcPath);
+
+        if (!seenFiles.has(filename)) {
+          seenFiles.add(filename);
+          manifest.sounds.push({ file: filename, volume: 1.0, enabled: true });
+        }
+
+        if (isEventFolder) {
+          manifest.assignments.push({
+            file: filename,
+            event: folderName as AgentEventType,
+          });
+        }
+      }
+
+      dirsToRemove.push(folderPath);
+    }
+
+    for (const dirPath of dirsToRemove) {
+      try {
+        await remove(dirPath, { recursive: true });
+      } catch { /* ignore if already removed */ }
+    }
+
+    await savePackManifest(packName, manifest);
+    return manifest;
+  }
+
   async function scanPacks(): Promise<PackInfo[]> {
     const discovered: PackInfo[] = [];
 
@@ -210,8 +272,15 @@ export const useSoundStore = defineStore('sound', () => {
       const packPath = `${soundPacksDir}/${packName}`;
       const categories: Record<string, string[]> = {};
 
-      const manifest = await loadPackManifest(packName);
-      const hasManifest = await exists(`${packPath}/manifest.json`);
+      let hasManifest = await exists(`${packPath}/manifest.json`);
+      let manifest: PackManifest;
+
+      if (hasManifest) {
+        manifest = await loadPackManifest(packName);
+      } else {
+        manifest = await autoMigratePack(packName, packPath);
+        hasManifest = true;
+      }
 
       const catEntries = await readDir(packPath);
       for (const cat of catEntries) {

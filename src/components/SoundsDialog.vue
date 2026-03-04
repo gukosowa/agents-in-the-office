@@ -23,6 +23,7 @@ import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
 import type { PackManifestSound } from '../stores/soundStore';
 import type { AgentEvent, AgentEventType } from '../drivers/types';
 import PackContextMenu from './PackContextMenu.vue';
+import { Info, X, Play, Square, TriangleAlert, Eye, EyeOff } from 'lucide-vue-next';
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -67,6 +68,9 @@ onUnmounted(() => {
   if (agentEventUnlisten) agentEventUnlisten();
   if (flashTimeout) clearTimeout(flashTimeout);
   if (importErrorTimeout) clearTimeout(importErrorTimeout);
+  if (dragCleanup) dragCleanup();
+  stopAutoScroll();
+  removeGhost();
 });
 
 function isPackActive(packName: string): boolean {
@@ -350,6 +354,29 @@ function toggleInfoPopover(eventType: string) {
   activeInfoPopover.value = activeInfoPopover.value === eventType ? null : eventType;
 }
 
+// ---- Event visibility ----
+const showVisibilityDialog = ref(false);
+
+const visibleEventTypes = computed(() =>
+  AGENT_EVENT_TYPES.filter(
+    (et) => !soundStore.config.hiddenEvents.includes(et),
+  ),
+);
+
+function isEventVisible(eventType: AgentEventType): boolean {
+  return !soundStore.config.hiddenEvents.includes(eventType);
+}
+
+function toggleEventVisibility(eventType: AgentEventType): void {
+  const idx = soundStore.config.hiddenEvents.indexOf(eventType);
+  if (idx >= 0) {
+    soundStore.config.hiddenEvents.splice(idx, 1);
+  } else {
+    soundStore.config.hiddenEvents.push(eventType);
+  }
+  void soundStore.saveConfig();
+}
+
 // ---- Patchbay data ----
 const selectedPackInfo = computed(() =>
   soundStore.packs.find((p) => p.name === selectedPack.value) ?? null,
@@ -452,48 +479,171 @@ async function removeAssignment(
   await soundStore.savePackManifest(selectedPack.value, manifest);
 }
 
-// ---- Drag-and-drop: sound → event row ----
+async function clearAssignments(eventType: AgentEventType): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  const manifest = selectedPackInfo.value.manifest;
+  manifest.assignments = manifest.assignments.filter(
+    (a) => a.event !== eventType,
+  );
+  await soundStore.savePackManifest(selectedPack.value, manifest);
+}
+
+// ---- Pointer-based drag-and-drop ----
 const draggingSoundFile = ref<string | null>(null);
 const dragOverEventType = ref<AgentEventType | null>(null);
-
-// ---- Drag-and-drop: chip → sound row (re-assign) ----
 const draggingChip = ref<{ file: string; event: AgentEventType } | null>(null);
 const dragOverSoundFile = ref<string | null>(null);
 
-function onSoundDragStart(e: DragEvent, filename: string): void {
-  draggingSoundFile.value = filename;
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('text/plain', filename);
+const eventsScrollContainer = ref<HTMLElement | null>(null);
+const soundsScrollContainer = ref<HTMLElement | null>(null);
+
+let dragCleanup: (() => void) | null = null;
+
+const SCROLL_EDGE_PX = 48;
+const SCROLL_MAX_SPEED = 10;
+
+// Ghost element for visual drag feedback
+let ghostEl: HTMLElement | null = null;
+
+function createGhost(label: string, x: number, y: number): void {
+  ghostEl = document.createElement('div');
+  ghostEl.textContent = label;
+  Object.assign(ghostEl.style, {
+    position: 'fixed',
+    left: `${x + 12}px`,
+    top: `${y - 10}px`,
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '11px',
+    fontFamily: 'monospace',
+    background: 'rgba(99,102,241,0.85)',
+    color: '#e0e7ff',
+    pointerEvents: 'none',
+    zIndex: '9999',
+    whiteSpace: 'nowrap',
+    maxWidth: '180px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  });
+  document.body.appendChild(ghostEl);
+}
+
+function moveGhost(x: number, y: number): void {
+  if (!ghostEl) return;
+  ghostEl.style.left = `${x + 12}px`;
+  ghostEl.style.top = `${y - 10}px`;
+}
+
+function removeGhost(): void {
+  if (ghostEl) {
+    ghostEl.remove();
+    ghostEl = null;
   }
 }
 
-function onSoundDragEnd(): void {
-  draggingSoundFile.value = null;
-  dragOverEventType.value = null;
+// Continuous scroll via rAF loop
+let scrollAnimId = 0;
+let scrollTarget: { container: HTMLElement; clientY: number } | null = null;
+
+function scrollLoop(): void {
+  if (!scrollTarget) return;
+  const { container, clientY } = scrollTarget;
+  const rect = container.getBoundingClientRect();
+  const topDist = clientY - rect.top;
+  const bottomDist = rect.bottom - clientY;
+
+  if (topDist >= 0 && topDist < SCROLL_EDGE_PX) {
+    const ratio = 1 - topDist / SCROLL_EDGE_PX;
+    container.scrollTop -= ratio * SCROLL_MAX_SPEED;
+  } else if (bottomDist >= 0 && bottomDist < SCROLL_EDGE_PX) {
+    const ratio = 1 - bottomDist / SCROLL_EDGE_PX;
+    container.scrollTop += ratio * SCROLL_MAX_SPEED;
+  }
+
+  scrollAnimId = requestAnimationFrame(scrollLoop);
 }
 
-function onEventDragOver(e: DragEvent, eventType: AgentEventType): void {
-  if (!draggingSoundFile.value) return;
+function startAutoScroll(container: HTMLElement, clientY: number): void {
+  scrollTarget = { container, clientY };
+  if (!scrollAnimId) scrollAnimId = requestAnimationFrame(scrollLoop);
+}
+
+function updateAutoScrollY(clientY: number): void {
+  if (scrollTarget) scrollTarget.clientY = clientY;
+}
+
+function stopAutoScroll(): void {
+  cancelAnimationFrame(scrollAnimId);
+  scrollAnimId = 0;
+  scrollTarget = null;
+}
+
+function findEventRowAtPoint(clientX: number, clientY: number): AgentEventType | null {
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el) return null;
+  const row = (el as HTMLElement).closest('[data-event-type]') as HTMLElement | null;
+  return (row?.dataset.eventType as AgentEventType) ?? null;
+}
+
+function findSoundRowAtPoint(clientX: number, clientY: number): string | null {
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el) return null;
+  const row = (el as HTMLElement).closest('[data-sound-file]') as HTMLElement | null;
+  return row?.dataset.soundFile ?? null;
+}
+
+const DRAG_THRESHOLD = 6;
+
+function startSoundDrag(e: PointerEvent, filename: string): void {
+  if ((e.target as HTMLElement).closest('input, button')) return;
   e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-  dragOverEventType.value = eventType;
-}
+  const startX = e.clientX;
+  const startY = e.clientY;
+  let dragging = false;
 
-function onEventDragLeaveRow(): void {
-  dragOverEventType.value = null;
-}
+  function onMove(ev: PointerEvent) {
+    if (!dragging) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+      dragging = true;
+      draggingSoundFile.value = filename;
+      createGhost(filename, ev.clientX, ev.clientY);
+      if (eventsScrollContainer.value) {
+        startAutoScroll(eventsScrollContainer.value, ev.clientY);
+      }
+    }
+    moveGhost(ev.clientX, ev.clientY);
+    updateAutoScrollY(ev.clientY);
+    dragOverEventType.value = findEventRowAtPoint(ev.clientX, ev.clientY);
+  }
 
-async function onEventDrop(
-  e: DragEvent,
-  eventType: AgentEventType,
-): Promise<void> {
-  e.preventDefault();
-  dragOverEventType.value = null;
-  const file = draggingSoundFile.value;
-  draggingSoundFile.value = null;
-  if (!file) return;
-  await addAssignment(file, eventType);
+  function onUp(ev: PointerEvent) {
+    if (!dragging) {
+      cleanup();
+      void playPreview(filename);
+      return;
+    }
+    const target = findEventRowAtPoint(ev.clientX, ev.clientY);
+    cleanup();
+    if (target && draggingSoundFile.value) {
+      void addAssignment(draggingSoundFile.value, target);
+    }
+    draggingSoundFile.value = null;
+    dragOverEventType.value = null;
+  }
+
+  function cleanup() {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    removeGhost();
+    stopAutoScroll();
+    dragCleanup = null;
+  }
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  dragCleanup = cleanup;
 }
 
 async function addAssignment(
@@ -510,44 +660,81 @@ async function addAssignment(
   await soundStore.savePackManifest(selectedPack.value, manifest);
 }
 
-// ---- Chip drag handlers (re-assign chip to different sound) ----
-function onChipDragStart(
-  e: DragEvent,
+// ---- Chip pointer drag (re-assign chip to different sound) ----
+function startChipDrag(
+  e: PointerEvent,
   file: string,
   eventType: AgentEventType,
 ): void {
-  draggingChip.value = { file, event: eventType };
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', file);
-  }
-}
-
-function onChipDragEnd(): void {
-  draggingChip.value = null;
-  dragOverSoundFile.value = null;
-}
-
-function onSoundRowDragOver(e: DragEvent, filename: string): void {
-  if (!draggingChip.value) return;
   e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-  dragOverSoundFile.value = filename;
+  e.stopPropagation();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  let dragging = false;
+
+  function onMove(ev: PointerEvent) {
+    if (!dragging) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+      dragging = true;
+      draggingChip.value = { file, event: eventType };
+      createGhost(file, ev.clientX, ev.clientY);
+      if (eventsScrollContainer.value) {
+        startAutoScroll(eventsScrollContainer.value, ev.clientY);
+      }
+    }
+    moveGhost(ev.clientX, ev.clientY);
+    updateAutoScrollY(ev.clientY);
+    // Check both event rows and sound rows as drop targets
+    const eventTarget = findEventRowAtPoint(ev.clientX, ev.clientY);
+    const soundTarget = findSoundRowAtPoint(ev.clientX, ev.clientY);
+    dragOverEventType.value = eventTarget;
+    dragOverSoundFile.value = soundTarget;
+  }
+
+  function onUp(ev: PointerEvent) {
+    if (!dragging) {
+      cleanup();
+      void playPreview(file);
+      return;
+    }
+    const eventTarget = findEventRowAtPoint(ev.clientX, ev.clientY);
+    const soundTarget = findSoundRowAtPoint(ev.clientX, ev.clientY);
+    const chip = draggingChip.value;
+    cleanup();
+    if (chip) {
+      if (eventTarget && eventTarget !== chip.event) {
+        // Dropped on a different event row — copy assignment
+        void addAssignment(chip.file, eventTarget);
+      } else if (soundTarget) {
+        // Dropped on a sound row — reassign to different file
+        void reassignChip(chip, soundTarget);
+      }
+    }
+    draggingChip.value = null;
+    dragOverEventType.value = null;
+    dragOverSoundFile.value = null;
+  }
+
+  function cleanup() {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    removeGhost();
+    stopAutoScroll();
+    dragCleanup = null;
+  }
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  dragCleanup = cleanup;
 }
 
-function onSoundRowDragLeave(): void {
-  dragOverSoundFile.value = null;
-}
-
-async function onSoundRowDrop(
-  e: DragEvent,
+async function reassignChip(
+  chip: { file: string; event: AgentEventType },
   newFile: string,
 ): Promise<void> {
-  e.preventDefault();
-  dragOverSoundFile.value = null;
-  const chip = draggingChip.value;
-  draggingChip.value = null;
-  if (!chip || !selectedPack.value || !selectedPackInfo.value) return;
+  if (!selectedPack.value || !selectedPackInfo.value) return;
   if (chip.file === newFile) return;
   const manifest = selectedPackInfo.value.manifest;
   manifest.assignments = manifest.assignments.filter(
@@ -833,7 +1020,7 @@ watch(selectedPack, async (packName) => {
                   @click="openAddFilePicker"
                 >Add file</button>
               </div>
-              <div class="flex-1 overflow-y-auto relative">
+              <div ref="soundsScrollContainer" class="flex-1 overflow-y-auto relative">
                 <!-- Audio file drop overlay -->
                 <div
                   v-if="audioDragOver && selectedPack"
@@ -857,8 +1044,8 @@ watch(selectedPack, async (packName) => {
                   v-for="sound in selectedPackInfo.manifest.sounds"
                   v-else
                   :key="sound.file"
-                  draggable="true"
-                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40 cursor-grab transition-colors duration-150"
+                  :data-sound-file="sound.file"
+                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40 cursor-grab select-none transition-colors duration-150"
                   :class="[
                     draggingSoundFile === sound.file ? 'opacity-50' : '',
                     dragOverSoundFile === sound.file ? 'bg-indigo-500/20' : '',
@@ -866,28 +1053,27 @@ watch(selectedPack, async (packName) => {
                   ]"
                   @mouseenter="hoveredSoundFile = sound.file"
                   @mouseleave="hoveredSoundFile = null"
-                  @dragstart="onSoundDragStart($event, sound.file)"
-                  @dragend="onSoundDragEnd"
-                  @dragover="onSoundRowDragOver($event, sound.file)"
-                  @dragleave="onSoundRowDragLeave"
-                  @drop="onSoundRowDrop($event, sound.file)"
+                  @pointerdown="startSoundDrag($event, sound.file)"
                 >
-                  <!-- Play button -->
-                  <button
-                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-white hover:bg-gray-700 text-xs"
-                    title="Play preview"
-                    @click="playPreview(sound.file)"
-                  >▶</button>
+                  <!-- Enabled toggle -->
+                  <input
+                    type="checkbox"
+                    :checked="sound.enabled"
+                    class="shrink-0 w-4 h-4 accent-indigo-400 cursor-pointer"
+                    title="Enable/disable this sound"
+                    @change="updateSoundEnabled(sound, ($event.target as HTMLInputElement).checked)"
+                  />
 
                   <!-- Filename -->
                   <span class="flex-1 text-xs font-mono text-gray-200 truncate min-w-0">{{ sound.file }}</span>
 
                   <!-- Broken link indicator -->
-                  <span
+                  <TriangleAlert
                     v-if="soundFileExists.get(sound.file) === false"
-                    class="shrink-0 text-red-400 text-xs"
+                    class="shrink-0 text-red-400"
+                    :size="14"
                     title="File not found on disk"
-                  >⚠</span>
+                  />
 
                   <!-- Volume slider (visible on hover) -->
                   <input
@@ -902,37 +1088,41 @@ watch(selectedPack, async (packName) => {
                     @input="updateSoundVolume(sound, parseFloat(($event.target as HTMLInputElement).value))"
                   />
 
-                  <!-- Enabled toggle -->
-                  <input
-                    type="checkbox"
-                    :checked="sound.enabled"
-                    class="shrink-0 w-4 h-4 accent-indigo-400 cursor-pointer"
-                    title="Enable/disable this sound"
-                    @change="updateSoundEnabled(sound, ($event.target as HTMLInputElement).checked)"
-                  />
+                  <!-- Play button -->
+                  <button
+                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-white hover:bg-gray-700"
+                    title="Play preview"
+                    @click="playPreview(sound.file)"
+                  ><Play :size="12" /></button>
 
                   <!-- Stop button -->
                   <button
-                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs"
+                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded"
                     :class="previewFile === sound.file
                       ? 'text-red-400 hover:text-red-300 hover:bg-gray-700'
                       : 'text-gray-600 cursor-default'"
                     title="Stop preview"
                     @click="previewFile === sound.file ? stopPreview() : undefined"
-                  >■</button>
+                  ><Square :size="10" /></button>
                 </div>
               </div>
             </div>
 
             <!-- Events column -->
             <div class="flex-1 flex flex-col min-w-0">
-              <div class="px-3 py-2 border-b border-gray-700 shrink-0">
-                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Events</span>
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-700 shrink-0">
+                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Events</span>
+                <button
+                  class="text-gray-400 hover:text-gray-200"
+                  title="Toggle event visibility"
+                  @click="showVisibilityDialog = true"
+                ><Eye :size="14" /></button>
               </div>
-              <div class="flex-1 overflow-y-auto">
+              <div ref="eventsScrollContainer" class="flex-1 overflow-y-auto">
                 <div
-                  v-for="eventType in AGENT_EVENT_TYPES"
+                  v-for="eventType in visibleEventTypes"
                   :key="eventType"
+                  :data-event-type="eventType"
                   class="px-3 py-2 border-b border-gray-800 transition-all duration-200"
                   :class="[
                     hasAssignments(eventType) ? 'opacity-100' : 'opacity-40',
@@ -940,9 +1130,6 @@ watch(selectedPack, async (packName) => {
                     dragOverEventType === eventType ? 'bg-indigo-500/20 opacity-100' : '',
                     draggingSoundFile ? 'opacity-100' : '',
                   ]"
-                  @dragover="onEventDragOver($event, eventType)"
-                  @dragleave="onEventDragLeaveRow"
-                  @drop="onEventDrop($event, eventType)"
                 >
                   <div class="flex items-center gap-2">
                     <span class="text-sm font-mono text-gray-300 flex-1">{{ eventType }}</span>
@@ -953,12 +1140,12 @@ watch(selectedPack, async (packName) => {
                       @click.stop
                     >
                       <span
-                        class="w-4 h-4 flex items-center justify-center rounded-full border text-[10px] leading-none cursor-pointer select-none"
+                        class="flex items-center justify-center cursor-pointer select-none"
                         :class="activeInfoPopover === eventType
-                          ? 'border-indigo-400 text-indigo-300 bg-indigo-900/40'
-                          : 'border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-200'"
+                          ? 'text-indigo-300'
+                          : 'text-gray-500 hover:text-gray-200'"
                         @click="toggleInfoPopover(eventType)"
-                      >i</span>
+                      ><Info :size="14" /></span>
                       <div
                         v-if="activeInfoPopover === eventType"
                         class="absolute right-0 top-6 z-50 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg px-3 py-2 text-xs text-gray-200 leading-relaxed"
@@ -966,6 +1153,12 @@ watch(selectedPack, async (packName) => {
                         {{ EVENT_DESCRIPTIONS[eventType] }}
                       </div>
                     </span>
+                    <button
+                      v-if="hasAssignments(eventType)"
+                      class="shrink-0 flex items-center justify-center text-gray-500 hover:text-red-400 cursor-pointer select-none"
+                      title="Clear all sounds"
+                      @click.stop="clearAssignments(eventType)"
+                    ><X :size="14" /></button>
                   </div>
                   <!-- Assignment chips -->
                   <div
@@ -975,20 +1168,18 @@ watch(selectedPack, async (packName) => {
                     <span
                       v-for="file in assignmentsForEvent(eventType)"
                       :key="file"
-                      draggable="true"
-                      class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700/80 rounded text-xs text-gray-200 cursor-grab hover:bg-gray-600/80"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700/80 rounded text-xs text-gray-200 cursor-grab select-none hover:bg-gray-600/80"
                       :class="draggingChip?.file === file && draggingChip?.event === eventType ? 'opacity-50' : ''"
                       :title="file"
                       @click="playPreview(file)"
-                      @dragstart.stop="onChipDragStart($event, file, eventType)"
-                      @dragend="onChipDragEnd"
+                      @pointerdown="startChipDrag($event, file, eventType)"
                     >
                       {{ truncateFilename(file) }}
                       <button
-                        class="ml-0.5 text-gray-400 hover:text-red-400 leading-none"
+                        class="ml-0.5 -mr-1 px-0.5 py-1 -my-1 text-gray-400 hover:text-red-400"
                         title="Remove assignment"
                         @click.stop="removeAssignment(file, eventType)"
-                      >&times;</button>
+                      ><X :size="12" /></button>
                     </span>
                   </div>
                 </div>
@@ -1022,5 +1213,40 @@ watch(selectedPack, async (packName) => {
       @deleted="onPackDeleted"
       @migrated="onPackMigrated"
     />
+
+    <!-- Event visibility dialog -->
+    <div
+      v-if="showVisibilityDialog"
+      class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
+      @click.self="showVisibilityDialog = false"
+    >
+      <div class="w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl overflow-hidden">
+        <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-700">
+          <span class="text-sm font-semibold text-gray-200 flex-1">Visible Events</span>
+          <button
+            class="text-gray-400 hover:text-gray-200"
+            @click="showVisibilityDialog = false"
+          ><X :size="16" /></button>
+        </div>
+        <div class="max-h-80 overflow-y-auto py-1">
+          <button
+            v-for="eventType in AGENT_EVENT_TYPES"
+            :key="eventType"
+            class="flex items-center gap-2 w-full px-4 py-1.5 text-left hover:bg-gray-700/50"
+            @click="toggleEventVisibility(eventType)"
+          >
+            <component
+              :is="isEventVisible(eventType) ? Eye : EyeOff"
+              :size="14"
+              :class="isEventVisible(eventType) ? 'text-indigo-400' : 'text-gray-600'"
+            />
+            <span
+              class="text-xs font-mono"
+              :class="isEventVisible(eventType) ? 'text-gray-200' : 'text-gray-500'"
+            >{{ eventType }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </Teleport>
 </template>

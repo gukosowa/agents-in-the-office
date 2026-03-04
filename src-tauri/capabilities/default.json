@@ -58,6 +58,10 @@
       "allow": [{ "path": "$HOME/.agents-in-the-office/**" }]
     },
     {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$HOME/.agents-in-the-office/**" }]
+    },
+    {
       "identifier": "fs:allow-copy-file",
       "allow": [{ "path": "$HOME/.agents-in-the-office/**" }]
     }

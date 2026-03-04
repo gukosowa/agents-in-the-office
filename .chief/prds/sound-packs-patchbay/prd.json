@@ -181,8 +181,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 6,
-      "passes": false,
-      "inProgress": true
+      "passes": true
     }
   ]
 }
