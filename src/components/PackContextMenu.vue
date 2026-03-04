@@ -7,13 +7,17 @@ import {
   readDir,
   readFile,
   writeFile,
+  exists,
 } from '@tauri-apps/plugin-fs';
-import { useSoundStore } from '../stores/soundStore';
+import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
+import type { AgentEventType } from '../drivers/types';
+import type { PackManifest } from '../stores/soundStore';
 
 const props = defineProps<{
   packName: string;
   x: number;
   y: number;
+  hasManifest: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +25,7 @@ const emit = defineEmits<{
   renamed: [oldName: string, newName: string];
   duplicated: [newName: string];
   deleted: [name: string];
+  migrated: [name: string];
 }>();
 
 const soundStore = useSoundStore();
@@ -79,11 +84,16 @@ async function confirmRename() {
       soundStore.config.activePacks[idx] = newName;
     }
 
-    // Move tracks config entry
-    const oldTracks = soundStore.config.tracks[props.packName];
-    if (oldTracks !== undefined) {
-      soundStore.config.tracks[newName] = oldTracks;
-      delete soundStore.config.tracks[props.packName];
+    // Move soundOverrides entries to new pack name
+    const oldPrefix = `${props.packName}/`;
+    const newPrefix = `${newName}/`;
+    for (const key of Object.keys(soundStore.config.soundOverrides)) {
+      if (key.startsWith(oldPrefix)) {
+        const filename = key.slice(oldPrefix.length);
+        soundStore.config.soundOverrides[`${newPrefix}${filename}`] =
+          soundStore.config.soundOverrides[key]!;
+        delete soundStore.config.soundOverrides[key];
+      }
     }
 
     await soundStore.saveConfig();
@@ -127,6 +137,69 @@ async function duplicate() {
   close();
 }
 
+async function migratePack(): Promise<void> {
+  const baseDir = soundStore.getSoundPacksDir();
+  const packPath = `${baseDir}/${props.packName}`;
+  const eventTypes = new Set<string>(AGENT_EVENT_TYPES);
+  const manifest: PackManifest = { sounds: [], assignments: [] };
+  const seenFiles = new Set<string>();
+  const dirsToRemove: string[] = [];
+
+  const entries = await readDir(packPath);
+  for (const entry of entries) {
+    if (!entry.isDirectory || entry.name === undefined) continue;
+    const folderName = entry.name;
+    const folderPath = `${packPath}/${folderName}`;
+    const isEventFolder = eventTypes.has(folderName);
+    const fileEntries = await readDir(folderPath);
+
+    for (const fileEntry of fileEntries) {
+      if (fileEntry.isDirectory || fileEntry.name === undefined) continue;
+      const filename = fileEntry.name;
+      const srcPath = `${folderPath}/${filename}`;
+      const dstPath = `${packPath}/${filename}`;
+
+      // Move file to pack root (skip if already exists there)
+      const alreadyAtRoot = await exists(dstPath);
+      if (!alreadyAtRoot) {
+        const data = await readFile(srcPath);
+        await writeFile(dstPath, data);
+      }
+      await remove(srcPath);
+
+      if (!seenFiles.has(filename)) {
+        seenFiles.add(filename);
+        manifest.sounds.push({
+          file: filename,
+          volume: 1.0,
+          enabled: true,
+        });
+      }
+
+      if (isEventFolder) {
+        manifest.assignments.push({
+          file: filename,
+          event: folderName as AgentEventType,
+        });
+      }
+    }
+
+    dirsToRemove.push(folderPath);
+  }
+
+  // Remove empty subdirectories
+  for (const dirPath of dirsToRemove) {
+    try {
+      await remove(dirPath, { recursive: true });
+    } catch { /* ignore if already removed */ }
+  }
+
+  // Write manifest
+  await soundStore.savePackManifest(props.packName, manifest);
+  emit('migrated', props.packName);
+  close();
+}
+
 async function deletePack() {
   const baseDir = soundStore.getSoundPacksDir();
   const packPath = `${baseDir}/${props.packName}`;
@@ -139,8 +212,13 @@ async function deletePack() {
       (p) => p !== props.packName,
     );
 
-    // Remove from tracks
-    delete soundStore.config.tracks[props.packName];
+    // Remove soundOverrides entries for this pack
+    const prefix = `${props.packName}/`;
+    for (const key of Object.keys(soundStore.config.soundOverrides)) {
+      if (key.startsWith(prefix)) {
+        delete soundStore.config.soundOverrides[key];
+      }
+    }
 
     await soundStore.saveConfig();
     emit('deleted', props.packName);
@@ -172,6 +250,13 @@ async function deletePack() {
         </div>
       </template>
       <template v-else>
+        <button
+          v-if="!hasManifest"
+          class="w-full text-left px-3 py-1.5 hover:bg-gray-700 text-amber-300"
+          @click="migratePack"
+        >
+          Migrate to new format
+        </button>
         <button
           class="w-full text-left px-3 py-1.5 hover:bg-gray-700 text-gray-200"
           @click="startRename"

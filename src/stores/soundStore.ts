@@ -40,21 +40,60 @@ export interface SoundConfig {
   globalVolume: number;
   cooldownSeconds: number;
   activePacks: string[];
-  tracks: Record<string, Record<string, TrackConfig>>;
+  /** Per-sound overrides, key: "<packName>/<filename>" */
+  soundOverrides: Record<string, { volume: number; enabled: boolean }>;
+  /** Legacy field — read for migration only, not written on save */
+  tracks?: Record<string, Record<string, TrackConfig>>;
+}
+
+export interface PackManifestSound {
+  file: string;
+  volume: number;
+  enabled: boolean;
+}
+
+export interface PackManifestAssignment {
+  file: string;
+  event: AgentEventType;
+}
+
+export interface PackManifest {
+  sounds: PackManifestSound[];
+  assignments: PackManifestAssignment[];
 }
 
 export interface PackInfo {
   name: string;
   categories: Record<string, string[]>;
+  manifest: PackManifest;
+  hasManifest: boolean;
 }
+
 
 const DEFAULT_CONFIG: SoundConfig = {
   enabled: true,
   globalVolume: 0.8,
   cooldownSeconds: 2,
   activePacks: [],
-  tracks: {},
+  soundOverrides: {},
 };
+
+function migrateTracksToSoundOverrides(
+  tracks: Record<string, Record<string, TrackConfig>>,
+): Record<string, { volume: number; enabled: boolean }> {
+  const overrides: Record<string, { volume: number; enabled: boolean }> = {};
+  for (const [packName, packTracks] of Object.entries(tracks)) {
+    for (const [categoryAndFile, trackCfg] of Object.entries(packTracks)) {
+      const slashIdx = categoryAndFile.indexOf('/');
+      const filename = slashIdx >= 0 ? categoryAndFile.slice(slashIdx + 1) : categoryAndFile;
+      const overrideKey = `${packName}/${filename}`;
+      if (!(overrideKey in overrides)) {
+        overrides[overrideKey] = { volume: trackCfg.volume, enabled: trackCfg.enabled };
+      }
+    }
+  }
+  return overrides;
+}
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav', '.flac', '.m4a', '.webm']);
 
@@ -65,7 +104,7 @@ function hasAudioExtension(filename: string): boolean {
 }
 
 export const useSoundStore = defineStore('sound', () => {
-  const config = ref<SoundConfig>({ ...DEFAULT_CONFIG, tracks: {} });
+  const config = ref<SoundConfig>({ ...DEFAULT_CONFIG, soundOverrides: {} });
   const packs = ref<PackInfo[]>([]);
 
   // Reactive state for sound indicator (US-009)
@@ -107,18 +146,50 @@ export const useSoundStore = defineStore('sound', () => {
     if (cfgExists) {
       try {
         const raw = await readTextFile(configPath);
-        config.value = { ...DEFAULT_CONFIG, ...JSON.parse(raw) as Partial<SoundConfig> };
+        const parsed = JSON.parse(raw) as Partial<SoundConfig>;
+        // Migrate legacy tracks field to soundOverrides
+        if (!parsed.soundOverrides && parsed.tracks) {
+          parsed.soundOverrides = migrateTracksToSoundOverrides(parsed.tracks);
+        }
+        const { tracks: _tracks, ...rest } = parsed;
+        void _tracks; // consumed by migration above, drop from config
+        config.value = { ...DEFAULT_CONFIG, ...rest };
       } catch {
-        config.value = { ...DEFAULT_CONFIG, tracks: {} };
+        config.value = { ...DEFAULT_CONFIG, soundOverrides: {} };
       }
     } else {
-      config.value = { ...DEFAULT_CONFIG, tracks: {} };
+      config.value = { ...DEFAULT_CONFIG, soundOverrides: {} };
       await saveConfig();
     }
   }
 
   async function saveConfig(): Promise<void> {
     await writeTextFile(configPath, JSON.stringify(config.value, null, 2));
+  }
+
+  // -------------------------------------------------------------------------
+  // Pack manifest read/write
+  // -------------------------------------------------------------------------
+
+  async function loadPackManifest(packName: string): Promise<PackManifest> {
+    const manifestPath = `${soundPacksDir}/${packName}/manifest.json`;
+    const manifestExists = await exists(manifestPath);
+    if (!manifestExists) return { sounds: [], assignments: [] };
+    try {
+      const raw = await readTextFile(manifestPath);
+      const parsed = JSON.parse(raw) as Partial<PackManifest>;
+      return {
+        sounds: Array.isArray(parsed.sounds) ? parsed.sounds : [],
+        assignments: Array.isArray(parsed.assignments) ? parsed.assignments : [],
+      };
+    } catch {
+      return { sounds: [], assignments: [] };
+    }
+  }
+
+  async function savePackManifest(packName: string, manifest: PackManifest): Promise<void> {
+    const manifestPath = `${soundPacksDir}/${packName}/manifest.json`;
+    await writeTextFile(manifestPath, JSON.stringify(manifest, null, 2));
   }
 
   // -------------------------------------------------------------------------
@@ -138,6 +209,9 @@ export const useSoundStore = defineStore('sound', () => {
       const packName = entry.name;
       const packPath = `${soundPacksDir}/${packName}`;
       const categories: Record<string, string[]> = {};
+
+      const manifest = await loadPackManifest(packName);
+      const hasManifest = await exists(`${packPath}/manifest.json`);
 
       const catEntries = await readDir(packPath);
       for (const cat of catEntries) {
@@ -160,7 +234,7 @@ export const useSoundStore = defineStore('sound', () => {
         }
       }
 
-      discovered.push({ name: packName, categories });
+      discovered.push({ name: packName, categories, manifest, hasManifest });
     }
 
     packs.value = discovered;
@@ -168,28 +242,50 @@ export const useSoundStore = defineStore('sound', () => {
   }
 
   // -------------------------------------------------------------------------
-  // Track config helpers
+  // Sound override helpers (two-layer: soundOverrides → manifest default)
   // -------------------------------------------------------------------------
 
-  function getTrackConfig(packName: string, categoryAndFile: string): TrackConfig {
-    const packTracks = config.value.tracks[packName];
-    if (packTracks) {
-      const existing = packTracks[categoryAndFile];
-      if (existing !== undefined) return existing;
-    }
-    const defaultTrack: TrackConfig = { enabled: true, volume: 1.0 };
-    if (!config.value.tracks[packName]) {
-      config.value.tracks[packName] = {};
-    }
-    config.value.tracks[packName][categoryAndFile] = defaultTrack;
-    return defaultTrack;
+  /** Extract filename from "category/filename" or plain "filename" key. */
+  function extractFilename(categoryAndFile: string): string {
+    const slashIdx = categoryAndFile.indexOf('/');
+    return slashIdx >= 0 ? categoryAndFile.slice(slashIdx + 1) : categoryAndFile;
   }
 
+  /**
+   * Effective volume for a sound: soundOverrides → manifest default → 1.0
+   */
+  function effectiveVolume(packName: string, filename: string, manifestSound?: PackManifestSound): number {
+    const override = config.value.soundOverrides[`${packName}/${filename}`];
+    if (override !== undefined) return override.volume;
+    return manifestSound?.volume ?? 1.0;
+  }
+
+  /**
+   * Effective enabled state: soundOverrides → manifest default → true
+   */
+  function isEnabled(packName: string, filename: string, manifestSound?: PackManifestSound): boolean {
+    const override = config.value.soundOverrides[`${packName}/${filename}`];
+    if (override !== undefined) return override.enabled;
+    return manifestSound?.enabled ?? true;
+  }
+
+  /**
+   * Get track config for a sound. Accepts legacy "category/filename" key format.
+   * Reads from soundOverrides using packName/filename key.
+   */
+  function getTrackConfig(packName: string, categoryAndFile: string): TrackConfig {
+    const filename = extractFilename(categoryAndFile);
+    const override = config.value.soundOverrides[`${packName}/${filename}`];
+    return override ?? { enabled: true, volume: 1.0 };
+  }
+
+  /**
+   * Set track config for a sound. Accepts legacy "category/filename" key format.
+   * Writes to soundOverrides using packName/filename key.
+   */
   function setTrackConfig(packName: string, categoryAndFile: string, track: TrackConfig): void {
-    if (!config.value.tracks[packName]) {
-      config.value.tracks[packName] = {};
-    }
-    config.value.tracks[packName][categoryAndFile] = track;
+    const filename = extractFilename(categoryAndFile);
+    config.value.soundOverrides[`${packName}/${filename}`] = track;
   }
 
   function getSoundPacksDir(): string {
@@ -268,13 +364,20 @@ export const useSoundStore = defineStore('sound', () => {
 
     // Find the pack info
     const packInfo = packs.value.find((p) => p.name === packName);
-    const files = packInfo?.categories[category] ?? [];
+    if (!packInfo) return;
 
-    // Filter to enabled tracks
-    const enabledFiles = files.filter((filename) => {
-      const key = `${category}/${filename}`;
-      return getTrackConfig(packName, key).enabled;
-    });
+    // Look up manifest assignments for this event type
+    const assignedFiles = packInfo.manifest.assignments
+      .filter((a) => a.event === event.type)
+      .map((a) => a.file);
+
+    // Build a lookup map for manifest sound defaults
+    const manifestSoundMap = new Map(packInfo.manifest.sounds.map((s) => [s.file, s]));
+
+    // Filter to enabled files using two-layer rule (soundOverrides → manifest default)
+    const enabledFiles = assignedFiles.filter((filename) =>
+      isEnabled(packName, filename, manifestSoundMap.get(filename)),
+    );
 
     if (enabledFiles.length === 0) return;
 
@@ -282,16 +385,25 @@ export const useSoundStore = defineStore('sound', () => {
     const chosenFile = enabledFiles[randomFileIdx];
     if (chosenFile === undefined) return;
 
-    const filePath = `${soundPacksDir}/${packName}/${category}/${chosenFile}`;
+    // Files live at pack root, not in category subdirectories
+    const filePath = `${soundPacksDir}/${packName}/${chosenFile}`;
+
+    // Skip missing file with a warning — no crash
+    const fileOnDisk = await exists(filePath);
+    if (!fileOnDisk) {
+      console.warn(`[soundStore] Sound file not found on disk, skipping: ${filePath}`);
+      return;
+    }
+
     const buffer = await loadBuffer(filePath);
     if (!buffer) return;
 
-    const trackKey = `${category}/${chosenFile}`;
-    const trackCfg = getTrackConfig(packName, trackKey);
+    const manifestSound = manifestSoundMap.get(chosenFile);
+    const vol = effectiveVolume(packName, chosenFile, manifestSound);
     const ctx = getAudioContext();
 
     const gainNode = ctx.createGain();
-    gainNode.gain.value = config.value.globalVolume * trackCfg.volume;
+    gainNode.gain.value = config.value.globalVolume * vol;
     gainNode.connect(ctx.destination);
 
     const source = ctx.createBufferSource();
@@ -328,8 +440,12 @@ export const useSoundStore = defineStore('sound', () => {
     init,
     saveConfig,
     scanPacks,
+    loadPackManifest,
+    savePackManifest,
     getTrackConfig,
     setTrackConfig,
+    effectiveVolume,
+    isEnabled,
     getSoundPacksDir,
     playForEvent,
     getOrCreateAudioContext,
