@@ -585,7 +585,7 @@ const drawRectPreviewTiles = (
               ctx, atSlot.image,
               previewVariant(atSlot.type),
               px, py, ts, atSlot.type,
-              previewWallVariant(atSlot.type),
+              dy === rh - 1 ? previewWallVariant(atSlot.type) : undefined,
               ry + dy, undefined, editorStore.zoom, rx + dx,
             );
           }
@@ -625,7 +625,7 @@ const drawRectPreviewTiles = (
           drawAutoTileCell(
             ctx, atSlot.image, pv,
             (rx + dx) * ts, (ry + dy) * ts, ts,
-            atSlot.type, wv,
+            atSlot.type, dy === rh - 1 ? wv : undefined,
             ry + dy, undefined, editorStore.zoom, rx + dx,
           );
         }
@@ -875,7 +875,7 @@ const render = () => {
                   ctx, atSlot.image,
                   previewVariant(atSlot.type),
                   px, py, ts, atSlot.type,
-                  previewWallVariant(atSlot.type),
+                  dy === bh - 1 ? previewWallVariant(atSlot.type) : undefined,
                   sy + dy, undefined, editorStore.zoom, sx + dx,
                 );
               }

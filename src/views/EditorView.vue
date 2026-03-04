@@ -343,7 +343,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
       }
     }
   }
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === 'p') {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'p' || e.key === 'Tab')) {
     e.preventDefault();
     editorStore.previewMode = !editorStore.previewMode;
     return;
