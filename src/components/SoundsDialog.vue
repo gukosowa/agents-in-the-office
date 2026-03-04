@@ -352,6 +352,60 @@ async function removeAssignment(
   await soundStore.savePackManifest(selectedPack.value, manifest);
 }
 
+// ---- Drag-and-drop: sound → event row ----
+const draggingSoundFile = ref<string | null>(null);
+const dragOverEventType = ref<AgentEventType | null>(null);
+
+function onSoundDragStart(e: DragEvent, filename: string): void {
+  draggingSoundFile.value = filename;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('text/plain', filename);
+  }
+}
+
+function onSoundDragEnd(): void {
+  draggingSoundFile.value = null;
+  dragOverEventType.value = null;
+}
+
+function onEventDragOver(e: DragEvent, eventType: AgentEventType): void {
+  if (!draggingSoundFile.value) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  dragOverEventType.value = eventType;
+}
+
+function onEventDragLeaveRow(): void {
+  dragOverEventType.value = null;
+}
+
+async function onEventDrop(
+  e: DragEvent,
+  eventType: AgentEventType,
+): Promise<void> {
+  e.preventDefault();
+  dragOverEventType.value = null;
+  const file = draggingSoundFile.value;
+  draggingSoundFile.value = null;
+  if (!file) return;
+  await addAssignment(file, eventType);
+}
+
+async function addAssignment(
+  file: string,
+  eventType: AgentEventType,
+): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  const manifest = selectedPackInfo.value.manifest;
+  const alreadyExists = manifest.assignments.some(
+    (a) => a.file === file && a.event === eventType,
+  );
+  if (alreadyExists) return;
+  manifest.assignments.push({ file, event: eventType });
+  await soundStore.savePackManifest(selectedPack.value, manifest);
+}
+
 // ---- Live highlight on incoming agent events ----
 const flashingEvent = ref<AgentEventType | null>(null);
 let flashTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -525,9 +579,13 @@ watch(selectedPack, async (packName) => {
                   v-for="sound in selectedPackInfo.manifest.sounds"
                   v-else
                   :key="sound.file"
-                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40"
+                  draggable="true"
+                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40 cursor-grab"
+                  :class="draggingSoundFile === sound.file ? 'opacity-50' : ''"
                   @mouseenter="hoveredSoundFile = sound.file"
                   @mouseleave="hoveredSoundFile = null"
+                  @dragstart="onSoundDragStart($event, sound.file)"
+                  @dragend="onSoundDragEnd"
                 >
                   <!-- Play button -->
                   <button
@@ -594,7 +652,12 @@ watch(selectedPack, async (packName) => {
                   :class="[
                     hasAssignments(eventType) ? 'opacity-100' : 'opacity-40',
                     flashingEvent === eventType ? 'bg-indigo-600/30' : '',
+                    dragOverEventType === eventType ? 'bg-indigo-500/20 opacity-100' : '',
+                    draggingSoundFile ? 'opacity-100' : '',
                   ]"
+                  @dragover="onEventDragOver($event, eventType)"
+                  @dragleave="onEventDragLeaveRow"
+                  @drop="onEventDrop($event, eventType)"
                 >
                   <div class="flex items-center gap-2">
                     <span class="text-sm font-mono text-gray-300 flex-1">{{ eventType }}</span>
