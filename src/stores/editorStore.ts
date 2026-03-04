@@ -14,6 +14,8 @@ export const useEditorStore = defineStore('editor', () => {
   const selectedSelection = ref<{x: number, y: number, w: number, h: number, slot: string} | null>(null);
   const selectedAutoTile = ref<AutoTile | null>(null);
   const activeSlot = ref('A');
+  /** One-shot hint: scroll the tile selector to this tile position. Cleared after use. */
+  const tileScrollHint = ref<{ x: number; y: number } | null>(null);
 
   const zoom = ref(1.0);
   const panX = ref(0);
@@ -152,6 +154,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedAutoTile.value = null;
     activeLayer.value = 0;
     activeSlot.value = 'A';
+    tileScrollHint.value = null;
   }
 
   function fitToView(
@@ -180,6 +183,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedSelection,
     selectedAutoTile,
     activeSlot,
+    tileScrollHint,
     showCollision,
     showGrid,
     showInteractiveLayer,

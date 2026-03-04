@@ -379,11 +379,12 @@ const pickTilesFromMap = (e: MouseEvent) => {
     editorStore.selectedTile = null;
     editorStore.selectedAutoTile = null;
     editorStore.selectedSelection = null;
-    // Switch to the tileset slot of the first regular tile in the selection.
+    // Switch to the tileset slot of the first regular tile and hint scroll.
     outer: for (const row of tiles) {
       for (const cell of row) {
         if (isRegularTile(cell)) {
           editorStore.activeSlot = cell.slot;
+          editorStore.tileScrollHint = { x: cell.x, y: cell.y };
           break outer;
         }
       }

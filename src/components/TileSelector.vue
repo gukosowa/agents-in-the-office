@@ -808,6 +808,31 @@ watch(() => editorStore.selectedTile, () => {
   drawOverlay();
   void nextTick(scrollTileIntoView);
 });
+
+watch(() => editorStore.tileScrollHint, (hint) => {
+  if (!hint) return;
+  editorStore.tileScrollHint = null;
+  void nextTick(() => {
+    const container = scrollContainer.value;
+    if (!container) return;
+    const ts = mapStore.tileSize;
+    const scale = zoomScale.value;
+    const tileLeft = hint.x * ts * scale;
+    const tileTop = hint.y * ts * scale;
+    const tileRight = tileLeft + ts * scale;
+    const tileBottom = tileTop + ts * scale;
+    if (tileLeft < container.scrollLeft) {
+      container.scrollLeft = tileLeft;
+    } else if (tileRight > container.scrollLeft + container.clientWidth) {
+      container.scrollLeft = tileRight - container.clientWidth;
+    }
+    if (tileTop < container.scrollTop) {
+      container.scrollTop = tileTop;
+    } else if (tileBottom > container.scrollTop + container.clientHeight) {
+      container.scrollTop = tileBottom - container.clientHeight;
+    }
+  });
+});
 watch(() => editorStore.selectedSelection, drawOverlay);
 watch(panelMode, drawOverlay);
 watch(() => mapStore.tileDepthMaps, drawOverlay, { deep: true });
