@@ -5,7 +5,10 @@ import {
   watch,
   nextTick,
   onMounted,
+  onUnmounted,
 } from 'vue';
+import { listen } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   mkdir,
@@ -16,7 +19,7 @@ import {
 import JSZip from 'jszip';
 import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
 import type { PackManifestSound } from '../stores/soundStore';
-import type { AgentEventType } from '../drivers/types';
+import type { AgentEvent, AgentEventType } from '../drivers/types';
 import PackContextMenu from './PackContextMenu.vue';
 
 const emit = defineEmits<{ close: [] }>();
@@ -47,6 +50,20 @@ onMounted(async () => {
   if (soundStore.packs.length > 0 && soundStore.packs[0]) {
     selectedPack.value = soundStore.packs[0].name;
   }
+  agentEventUnlisten = await listen<string>(
+    'agent-event',
+    (e) => {
+      try {
+        const parsed = JSON.parse(e.payload) as AgentEvent;
+        flashEventRow(parsed.type);
+      } catch { /* ignore parse errors */ }
+    },
+  );
+});
+
+onUnmounted(() => {
+  if (agentEventUnlisten) agentEventUnlisten();
+  if (flashTimeout) clearTimeout(flashTimeout);
 });
 
 function isPackActive(packName: string): boolean {
@@ -310,6 +327,45 @@ async function updateSoundEnabled(sound: PackManifestSound, enabled: boolean): P
   await soundStore.savePackManifest(selectedPack.value, selectedPackInfo.value.manifest);
 }
 
+// ---- Assignment chips (right column) ----
+function assignmentsForEvent(eventType: AgentEventType): string[] {
+  if (!selectedPackInfo.value) return [];
+  return selectedPackInfo.value.manifest.assignments
+    .filter((a) => a.event === eventType)
+    .map((a) => a.file);
+}
+
+function truncateFilename(name: string, max = 20): string {
+  if (name.length <= max) return name;
+  return name.slice(0, max - 1) + '\u2026';
+}
+
+async function removeAssignment(
+  file: string,
+  eventType: AgentEventType,
+): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  const manifest = selectedPackInfo.value.manifest;
+  manifest.assignments = manifest.assignments.filter(
+    (a) => !(a.file === file && a.event === eventType),
+  );
+  await soundStore.savePackManifest(selectedPack.value, manifest);
+}
+
+// ---- Live highlight on incoming agent events ----
+const flashingEvent = ref<AgentEventType | null>(null);
+let flashTimeout: ReturnType<typeof setTimeout> | null = null;
+let agentEventUnlisten: UnlistenFn | null = null;
+
+function flashEventRow(eventType: AgentEventType): void {
+  flashingEvent.value = eventType;
+  if (flashTimeout) clearTimeout(flashTimeout);
+  flashTimeout = setTimeout(() => {
+    flashingEvent.value = null;
+    flashTimeout = null;
+  }, 200);
+}
+
 // Reset scroll + stop preview + check file existence on pack change
 watch(selectedPack, async (packName) => {
   stopPreview();
@@ -534,31 +590,55 @@ watch(selectedPack, async (packName) => {
                 <div
                   v-for="eventType in AGENT_EVENT_TYPES"
                   :key="eventType"
-                  class="flex items-center gap-2 px-3 py-2 border-b border-gray-800 transition-opacity"
-                  :class="hasAssignments(eventType) ? 'opacity-100' : 'opacity-40'"
+                  class="px-3 py-2 border-b border-gray-800 transition-all duration-200"
+                  :class="[
+                    hasAssignments(eventType) ? 'opacity-100' : 'opacity-40',
+                    flashingEvent === eventType ? 'bg-indigo-600/30' : '',
+                  ]"
                 >
-                  <span class="text-sm font-mono text-gray-300 flex-1">{{ eventType }}</span>
-                  <!-- Info icon + popover -->
-                  <span
-                    v-if="EVENT_DESCRIPTIONS[eventType]"
-                    class="relative shrink-0"
-                    @click.stop
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-mono text-gray-300 flex-1">{{ eventType }}</span>
+                    <!-- Info icon + popover -->
+                    <span
+                      v-if="EVENT_DESCRIPTIONS[eventType]"
+                      class="relative shrink-0"
+                      @click.stop
+                    >
+                      <span
+                        class="w-4 h-4 flex items-center justify-center rounded-full border text-[10px] leading-none cursor-pointer select-none"
+                        :class="activeInfoPopover === eventType
+                          ? 'border-indigo-400 text-indigo-300 bg-indigo-900/40'
+                          : 'border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-200'"
+                        @click="toggleInfoPopover(eventType)"
+                      >i</span>
+                      <div
+                        v-if="activeInfoPopover === eventType"
+                        class="absolute right-0 top-6 z-50 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg px-3 py-2 text-xs text-gray-200 leading-relaxed"
+                      >
+                        {{ EVENT_DESCRIPTIONS[eventType] }}
+                      </div>
+                    </span>
+                  </div>
+                  <!-- Assignment chips -->
+                  <div
+                    v-if="assignmentsForEvent(eventType).length > 0"
+                    class="flex flex-wrap gap-1 mt-1"
                   >
                     <span
-                      class="w-4 h-4 flex items-center justify-center rounded-full border text-[10px] leading-none cursor-pointer select-none"
-                      :class="activeInfoPopover === eventType
-                        ? 'border-indigo-400 text-indigo-300 bg-indigo-900/40'
-                        : 'border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-200'"
-                      @click="toggleInfoPopover(eventType)"
-                    >i</span>
-                    <div
-                      v-if="activeInfoPopover === eventType"
-                      class="absolute right-0 top-6 z-50 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg px-3 py-2 text-xs text-gray-200 leading-relaxed"
+                      v-for="file in assignmentsForEvent(eventType)"
+                      :key="file"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700/80 rounded text-xs text-gray-200 cursor-pointer hover:bg-gray-600/80"
+                      :title="file"
+                      @click="playPreview(file)"
                     >
-                      {{ EVENT_DESCRIPTIONS[eventType] }}
-                    </div>
-                  </span>
-                  <!-- US-006 will add assignment chips here -->
+                      {{ truncateFilename(file) }}
+                      <button
+                        class="ml-0.5 text-gray-400 hover:text-red-400 leading-none"
+                        title="Remove assignment"
+                        @click.stop="removeAssignment(file, eventType)"
+                      >&times;</button>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
