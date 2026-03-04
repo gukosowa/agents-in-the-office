@@ -33,19 +33,24 @@ import type {
   AgentEvent, SessionStateFile,
 } from '../drivers/types';
 import AgentActivityPanel from '../components/AgentActivityPanel.vue';
+import SoundQuickPanel from '../components/SoundQuickPanel.vue';
 import {
   initDebugLog,
   stopDebugLog,
   debugLog,
 } from '../utils/debugLog';
 import { useCharacterStore } from '../stores/characterStore';
+import { useSoundStore } from '../stores/soundStore';
 
 const router = useRouter();
 const mapStore = useMapStore();
 const localeStore = useLocaleStore();
 const agentStore = useAgentStore();
 const characterStore = useCharacterStore();
+const soundStore = useSoundStore();
 const controlsExpanded = ref(false);
+const soundQuickPanelOpen = ref(false);
+const soundSettingsOpen = ref(false);
 let controlsCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 function openControls() {
@@ -103,6 +108,14 @@ watch(selectedSessionId, (val) => {
 watch(autoFollow, (val) => saveBool('autoFollow', val));
 watch(panelPinned, (val) => saveBool('panelPinned', val));
 watch(alwaysOnTop, (val) => saveBool('alwaysOnTop', val));
+
+watch(() => soundStore.lastPlayedSessionId, (sessionId) => {
+  if (!sessionId) return;
+  const npcId = findNpcForSession(sessionId);
+  if (!npcId) return;
+  const ch = characters.find((c) => c.id === npcId);
+  ch?.showSoundIndicator?.();
+});
 
 const SUBAGENT_NAME_MAX = 12;
 
@@ -1201,6 +1214,17 @@ const render = () => {
       ctx.fillText(ch.badge, screenX + ts / 2, badgeY);
       ctx.restore();
     }
+
+    if (ch.soundIndicatorTimer > 0) {
+      const alpha = Math.min(1, ch.soundIndicatorTimer);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = `${ts * 0.5}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('🔊', screenX + ts - 2, destY - 2);
+      ctx.restore();
+    }
   }
 
   ctx.restore();
@@ -1988,6 +2012,26 @@ onUnmounted(() => {
               : 'bg-gray-800/80 text-gray-400 border-gray-600 hover:bg-gray-700/80'"
             @click="toggleAlwaysOnTop"
           >Pin</button>
+          <!-- Sound quick panel toggle -->
+          <div class="relative">
+            <button
+              class="h-8 w-8 flex items-center justify-center text-sm rounded border transition-colors"
+              :class="soundStore.config.enabled
+                ? 'bg-gray-800/80 text-white border-gray-600 hover:bg-gray-700'
+                : 'bg-gray-800/80 text-gray-500 border-gray-600 hover:bg-gray-700'"
+              title="Sound settings"
+              @click="soundQuickPanelOpen = !soundQuickPanelOpen"
+            >🔊</button>
+            <div
+              v-if="soundQuickPanelOpen"
+              class="absolute top-10 right-0 z-[90]"
+            >
+              <SoundQuickPanel
+                :show-settings="soundSettingsOpen"
+                @update:show-settings="soundSettingsOpen = $event"
+              />
+            </div>
+          </div>
         </div>
         </Transition>
       </div>

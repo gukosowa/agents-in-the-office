@@ -136,6 +136,7 @@ export class Character {
   waitingForApproval = false;
   badge: string | undefined = undefined;
   nameTag: string | null = null;
+  soundIndicatorTimer = 0;
   renderScale = 1;
 
   idleElapsed = 0;
@@ -273,6 +274,7 @@ export class Character {
     this.locale = locale;
     this.aliveTime += dt;
     if (this.ghostTimer > 0) this.ghostTimer -= dt;
+    if (this.soundIndicatorTimer > 0) this.soundIndicatorTimer -= dt;
 
     if (this.state === 'exited') return;
 
@@ -1067,6 +1069,10 @@ export class Character {
     this.persistBubbleElapsed = 0;
     this.bubbleTimer = 0;
     this.bubbleAge = 0;
+  }
+
+  showSoundIndicator(): void {
+    this.soundIndicatorTimer = 1.0;
   }
 
   startConversation(
