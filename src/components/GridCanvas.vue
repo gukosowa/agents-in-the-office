@@ -10,7 +10,10 @@ import { useUndoStore } from '../stores/undoStore';
 import type {
   CellValue, TileLayer, LayerMeta, SpawnPoint, InteractiveObject,
 } from '../types';
-import { isAutoTile, isRegularTile, OBJECT_TYPES } from '../types';
+import {
+  isAutoTile, isRegularTile, OBJECT_TYPES,
+  DIR_UP, DIR_RIGHT, DIR_DOWN, DIR_LEFT,
+} from '../types';
 import type { AutoTileSlot, AutoTileType } from '../stores/mapStore';
 import { subTileToPixels } from '../utils/rmxpAutoTile';
 import {
@@ -789,6 +792,12 @@ const render = () => {
     drawCollisionOverlay(ctx, rawCollisionGrid, ts);
   }
 
+  if (editorStore.showDirCollision) {
+    drawDirCollisionOverlay(
+      ctx, mapStore.getEffectiveDirCollisionGrid(), ts,
+    );
+  }
+
   if (editorStore.showInteractiveLayer) {
     drawSpawnMarkers(ctx, rawSpawnPoints, ts);
   }
@@ -864,10 +873,12 @@ const render = () => {
 
   // Hover preview (only for drawing tools, not select/move)
   const tool = editorStore.selectedTool;
-  const isCollisionErase = editorStore.showCollision
-    && tool === 'eraser';
+  const isCollisionErase = (editorStore.showCollision
+    || editorStore.showDirCollision) && tool === 'eraser';
   const hoverColor = editorStore.showCollision
     ? '#60a5fa'          // blue for collision
+    : editorStore.showDirCollision
+    ? '#f87171'          // red for dir collision
     : tool === 'eraser'
       ? '#f87171'        // red for eraser
       : tool === 'fill'
@@ -1599,6 +1610,61 @@ const drawCollisionOverlay = (
   ctx.restore();
 };
 
+const drawDirCollisionOverlay = (
+  ctx: CanvasRenderingContext2D,
+  dirGrid: number[][],
+  ts: number,
+) => {
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = '#ef4444';
+  const cx = ts / 2;
+  const cy = ts / 2;
+  for (let y = 0; y < dirGrid.length; y++) {
+    const row = dirGrid[y];
+    if (!row) continue;
+    for (let x = 0; x < row.length; x++) {
+      const mask = row[x];
+      if (!mask) continue;
+      const px = x * ts;
+      const py = y * ts;
+      if (mask & DIR_UP) {
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + ts, py);
+        ctx.lineTo(px + cx, py + cy);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (mask & DIR_RIGHT) {
+        ctx.beginPath();
+        ctx.moveTo(px + ts, py);
+        ctx.lineTo(px + ts, py + ts);
+        ctx.lineTo(px + cx, py + cy);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (mask & DIR_DOWN) {
+        ctx.beginPath();
+        ctx.moveTo(px, py + ts);
+        ctx.lineTo(px + ts, py + ts);
+        ctx.lineTo(px + cx, py + cy);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (mask & DIR_LEFT) {
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px, py + ts);
+        ctx.lineTo(px + cx, py + cy);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+};
+
 const DIRECTION_ARROWS: Record<string, string> = {
   up: '\u25B2',
   down: '\u25BC',
@@ -1880,6 +1946,13 @@ const handlePointerDown = (e: PointerEvent) => {
     return;
   }
 
+  if (editorStore.showDirCollision) {
+    undoStore.beginDirCollisionBatch('Dir Collision');
+    isDrawing.value = true;
+    handleDirCollisionDraw(e);
+    return;
+  }
+
   if (currentTool === 'fill') {
     if (editorStore.activeLayer < mapStore.layers.length) {
       const snap = undoStore.captureSnapshot();
@@ -2001,6 +2074,8 @@ const handlePointerMove = (e: PointerEvent) => {
   if (isDrawing.value) {
     if (editorStore.showCollision) {
       handleCollisionDraw(e);
+    } else if (editorStore.showDirCollision) {
+      handleDirCollisionDraw(e);
     } else {
       handleDraw(e);
     }
@@ -2035,6 +2110,41 @@ const handleCollisionDraw = (e: MouseEvent) => {
     const before = row ? (row[x] ?? false) : false;
     mapStore.setCollision(x, y, collisionDragValue);
     undoStore.recordCollisionCell(x, y, before, collisionDragValue);
+  }
+};
+
+/** Determine which direction bit was clicked based on quadrant */
+const getDirBitFromQuadrant = (
+  e: MouseEvent, gx: number, gy: number,
+): number => {
+  const cvs = canvas.value;
+  if (!cvs) return 0;
+  const rect = cvs.getBoundingClientRect();
+  const ts = mapStore.tileSize * editorStore.zoom;
+  const px = (e.clientX - rect.left - editorStore.panX) - gx * ts;
+  const py = (e.clientY - rect.top - editorStore.panY) - gy * ts;
+  const relX = px / ts - 0.5;
+  const relY = py / ts - 0.5;
+  if (Math.abs(relX) > Math.abs(relY)) {
+    return relX > 0 ? DIR_RIGHT : DIR_LEFT;
+  }
+  return relY > 0 ? DIR_DOWN : DIR_UP;
+};
+
+const handleDirCollisionDraw = (e: MouseEvent) => {
+  const { x, y } = getGridCoord(e);
+  if (x < 0 || x >= mapStore.width || y < 0 || y >= mapStore.height) return;
+  const bit = getDirBitFromQuadrant(e, x, y);
+  if (!bit) return;
+  const before = mapStore.getDirCollision(x, y);
+  if (editorStore.selectedTool === 'eraser') {
+    const after = before & ~bit;
+    mapStore.setDirCollision(x, y, after);
+    undoStore.recordDirCollisionCell(x, y, before, after);
+  } else {
+    const after = before ^ bit;
+    mapStore.setDirCollision(x, y, after);
+    undoStore.recordDirCollisionCell(x, y, before, after);
   }
 };
 
@@ -2187,6 +2297,12 @@ const pickTileAtCursor = (e: MouseEvent) => {
     const row = mapStore.collisionGrid[y];
     const hasCollision = row ? (row[x] ?? false) : false;
     editorStore.setTool(hasCollision ? 'pen' : 'eraser');
+    return;
+  }
+
+  if (editorStore.showDirCollision) {
+    const mask = mapStore.getDirCollision(x, y);
+    editorStore.setTool(mask ? 'pen' : 'eraser');
     return;
   }
 
@@ -2414,6 +2530,14 @@ const handleKeyDown = (e: KeyboardEvent) => {
       case 't':
         editorStore.showCollision = !editorStore.showCollision;
         if (editorStore.showCollision) {
+          editorStore.showDirCollision = false;
+          editorStore.clearMultiSelections();
+        }
+        return;
+      case 'y':
+        editorStore.showDirCollision = !editorStore.showDirCollision;
+        if (editorStore.showDirCollision) {
+          editorStore.showCollision = false;
           editorStore.clearMultiSelections();
         }
         return;

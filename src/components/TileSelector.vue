@@ -3,9 +3,12 @@ import {
   ref, computed, watch, onMounted, onUnmounted, nextTick,
 } from 'vue';
 import {
-  Plus, MousePointer2, Layers, Ban, Zap,
+  Plus, MousePointer2, Layers, Ban, Zap, Compass,
 } from 'lucide-vue-next';
-import { OBJECT_TYPES, type Direction } from '../types';
+import {
+  OBJECT_TYPES, DIR_UP, DIR_RIGHT, DIR_DOWN, DIR_LEFT,
+  type Direction,
+} from '../types';
 import { useMapStore, type AutoTileType } from '../stores/mapStore';
 import { useEditorStore } from '../stores/editorStore';
 import { subTileToPixels } from '../utils/rmxpAutoTile';
@@ -126,7 +129,7 @@ const contextMenu = ref<{
 
 // ── Panel mode ───────────────────────────────────────────────
 const panelMode = ref<
-  'cursor' | 'depth' | 'collision' | 'interactive'
+  'cursor' | 'depth' | 'collision' | 'dir-collision' | 'interactive'
 >('cursor');
 
 const DIRECTION_ARROWS: Record<string, string> = {
@@ -619,6 +622,57 @@ const drawOverlay = () => {
     }
   }
 
+  // Draw directional collision markers for current slot
+  const dirColMap =
+    mapStore.tileDirCollisionMaps[editorStore.activeSlot];
+  if (dirColMap && panelMode.value === 'dir-collision') {
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = '#ef4444';
+    const halfTile = sts / 2;
+    for (const [key, mask] of Object.entries(dirColMap)) {
+      const [cx, cy] = key.split(',').map(Number);
+      if (cx === undefined || cy === undefined || !mask) continue;
+      const px = cx * sts;
+      const py = cy * sts;
+      const midX = px + halfTile;
+      const midY = py + halfTile;
+      if (mask & DIR_UP) {
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + sts, py);
+        ctx.lineTo(midX, midY);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (mask & DIR_RIGHT) {
+        ctx.beginPath();
+        ctx.moveTo(px + sts, py);
+        ctx.lineTo(px + sts, py + sts);
+        ctx.lineTo(midX, midY);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (mask & DIR_DOWN) {
+        ctx.beginPath();
+        ctx.moveTo(px, py + sts);
+        ctx.lineTo(px + sts, py + sts);
+        ctx.lineTo(midX, midY);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (mask & DIR_LEFT) {
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px, py + sts);
+        ctx.lineTo(midX, midY);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   // Draw interactive markers for current slot
   const intMap =
     mapStore.tileInteractiveMaps[editorStore.activeSlot];
@@ -704,6 +758,30 @@ const startSelection = (e: MouseEvent) => {
 
   if (panelMode.value === 'collision') {
     mapStore.toggleTileCollision(editorStore.activeSlot, x, y);
+    drawOverlay();
+    return;
+  }
+
+  if (panelMode.value === 'dir-collision') {
+    const img = activeSlotImage.value;
+    if (!overlayCanvas.value || !img) return;
+    const rect = overlayCanvas.value.getBoundingClientRect();
+    const scaleX = overlayCanvas.value.width / rect.width;
+    const scaleY = overlayCanvas.value.height / rect.height;
+    const sts = mapStore.tileSize * zoomScale.value;
+    const canvasX = (e.clientX - rect.left) * scaleX;
+    const canvasY = (e.clientY - rect.top) * scaleY;
+    const relX = (canvasX - x * sts) - sts / 2;
+    const relY = (canvasY - y * sts) - sts / 2;
+    let bit: number;
+    if (Math.abs(relX) > Math.abs(relY)) {
+      bit = relX > 0 ? DIR_RIGHT : DIR_LEFT;
+    } else {
+      bit = relY > 0 ? DIR_DOWN : DIR_UP;
+    }
+    mapStore.toggleTileDirCollisionBit(
+      editorStore.activeSlot, x, y, bit,
+    );
     drawOverlay();
     return;
   }
@@ -881,6 +959,9 @@ watch(panelMode, drawOverlay);
 watch(() => mapStore.tileDepthMaps, drawOverlay, { deep: true });
 watch(() => mapStore.tileCollisionMaps, drawOverlay, { deep: true });
 watch(
+  () => mapStore.tileDirCollisionMaps, drawOverlay, { deep: true },
+);
+watch(
   () => mapStore.tileInteractiveMaps, drawOverlay, { deep: true },
 );
 watch(() => mapStore.tileSize, () => {
@@ -1055,6 +1136,18 @@ onUnmounted(() => {
         @click="panelMode = 'collision'"
       >
         <Ban :size="14" />
+      </button>
+      <button
+        :class="[
+          'p-1 rounded transition-colors',
+          panelMode === 'dir-collision'
+            ? 'bg-blue-600 text-white'
+            : 'bg-gray-700 text-gray-400 hover:bg-gray-600',
+        ]"
+        title="Directional collision mode"
+        @click="panelMode = 'dir-collision'"
+      >
+        <Compass :size="14" />
       </button>
       <button
         :class="[

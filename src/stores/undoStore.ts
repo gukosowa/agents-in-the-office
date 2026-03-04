@@ -22,6 +22,11 @@ export interface CollisionPatch {
   cells: Map<string, { before: boolean; after: boolean }>;
 }
 
+export interface DirCollisionPatch {
+  kind: 'dir-collision';
+  cells: Map<string, { before: number; after: number }>;
+}
+
 export interface ObjectsPatch {
   kind: 'objects';
   before: InteractiveObject[];
@@ -66,6 +71,7 @@ export interface MapSnapshot {
   layers: TileLayer[];
   layerMeta: LayerMeta[];
   collisionGrid: boolean[][];
+  dirCollisionGrid: number[][];
   objects: InteractiveObject[];
   spawnPoints: SpawnPoint[];
 }
@@ -84,6 +90,7 @@ export interface CompoundPatch {
 export type UndoPatch =
   | TilePatch
   | CollisionPatch
+  | DirCollisionPatch
   | ObjectsPatch
   | SpawnsPatch
   | LayerAddPatch
@@ -147,7 +154,16 @@ interface CollisionBatch {
   startHeight: number;
 }
 
-type ActiveBatch = TileBatch | CollisionBatch;
+interface DirCollisionBatch {
+  type: 'dir-collision';
+  label: string;
+  cells: Map<string, { before: number; after: number }>;
+  snapshot: MapSnapshot;
+  startWidth: number;
+  startHeight: number;
+}
+
+type ActiveBatch = TileBatch | CollisionBatch | DirCollisionBatch;
 
 // --- Store ---
 
@@ -196,6 +212,7 @@ export const useUndoStore = defineStore('undo', () => {
     const rawLayers = toRaw(map.layers) as TileLayer[];
     const rawMeta = toRaw(map.layerMeta) as LayerMeta[];
     const rawGrid = toRaw(map.collisionGrid) as boolean[][];
+    const rawDirGrid = toRaw(map.dirCollisionGrid) as number[][];
     const rawObjs = toRaw(map.objects) as InteractiveObject[];
     const rawSpawns = toRaw(map.spawnPoints) as SpawnPoint[];
     return {
@@ -204,6 +221,7 @@ export const useUndoStore = defineStore('undo', () => {
       layers: rawLayers.map(l => cloneLayer(l)),
       layerMeta: rawMeta.map(m => ({ ...m })),
       collisionGrid: cloneCollisionGrid(rawGrid),
+      dirCollisionGrid: rawDirGrid.map(r => [...r]),
       objects: cloneObjects(rawObjs),
       spawnPoints: cloneSpawns(rawSpawns),
     };
@@ -265,6 +283,32 @@ export const useUndoStore = defineStore('undo', () => {
     }
   }
 
+  function beginDirCollisionBatch(label: string) {
+    const map = useMapStore();
+    activeBatch = {
+      type: 'dir-collision',
+      label,
+      cells: new Map(),
+      snapshot: captureSnapshot(),
+      startWidth: map.width,
+      startHeight: map.height,
+    };
+  }
+
+  function recordDirCollisionCell(
+    x: number, y: number,
+    before: number, after: number,
+  ) {
+    if (!activeBatch || activeBatch.type !== 'dir-collision') return;
+    const key = `${x},${y}`;
+    const existing = activeBatch.cells.get(key);
+    if (existing) {
+      existing.after = after;
+    } else {
+      activeBatch.cells.set(key, { before, after });
+    }
+  }
+
   function commitBatch() {
     if (!activeBatch) return;
     const map = useMapStore();
@@ -305,7 +349,7 @@ export const useUndoStore = defineStore('undo', () => {
           cells: activeBatch.cells,
         },
       });
-    } else {
+    } else if (activeBatch.type === 'collision') {
       for (const [key, diff] of activeBatch.cells) {
         if (diff.before === diff.after) {
           activeBatch.cells.delete(key);
@@ -319,6 +363,23 @@ export const useUndoStore = defineStore('undo', () => {
         label: activeBatch.label,
         patch: {
           kind: 'collision',
+          cells: activeBatch.cells,
+        },
+      });
+    } else {
+      for (const [key, diff] of activeBatch.cells) {
+        if (diff.before === diff.after) {
+          activeBatch.cells.delete(key);
+        }
+      }
+      if (activeBatch.cells.size === 0) {
+        activeBatch = null;
+        return;
+      }
+      push({
+        label: activeBatch.label,
+        patch: {
+          kind: 'dir-collision',
           cells: activeBatch.cells,
         },
       });
@@ -346,6 +407,9 @@ export const useUndoStore = defineStore('undo', () => {
         break;
       case 'collision':
         applyCollisionPatch(patch, false);
+        break;
+      case 'dir-collision':
+        applyDirCollisionPatch(patch, false);
         break;
       case 'objects':
         map.objects = cloneObjects(patch.after);
@@ -398,6 +462,9 @@ export const useUndoStore = defineStore('undo', () => {
         break;
       case 'collision':
         applyCollisionPatch(patch, true);
+        break;
+      case 'dir-collision':
+        applyDirCollisionPatch(patch, true);
         break;
       case 'objects':
         map.objects = cloneObjects(patch.before);
@@ -468,6 +535,21 @@ export const useUndoStore = defineStore('undo', () => {
     }
   }
 
+  function applyDirCollisionPatch(
+    patch: DirCollisionPatch, reverse: boolean,
+  ) {
+    const map = useMapStore();
+    const grid = map.dirCollisionGrid;
+    for (const [key, diff] of patch.cells) {
+      const [xs, ys] = key.split(',');
+      const x = Number(xs);
+      const y = Number(ys);
+      const row = grid[y];
+      if (!row) continue;
+      row[x] = reverse ? diff.before : diff.after;
+    }
+  }
+
   function moveLayerDirect(from: number, to: number) {
     const map = useMapStore();
     const [layer] = map.layers.splice(from, 1);
@@ -485,6 +567,7 @@ export const useUndoStore = defineStore('undo', () => {
     map.layers = snap.layers.map(l => cloneLayer(l));
     map.layerMeta = snap.layerMeta.map(m => ({ ...m }));
     map.collisionGrid = cloneCollisionGrid(snap.collisionGrid);
+    map.dirCollisionGrid = snap.dirCollisionGrid.map(r => [...r]);
     map.objects = cloneObjects(snap.objects);
     map.spawnPoints = cloneSpawns(snap.spawnPoints);
   }
@@ -501,6 +584,8 @@ export const useUndoStore = defineStore('undo', () => {
     recordCell,
     beginCollisionBatch,
     recordCollisionCell,
+    beginDirCollisionBatch,
+    recordDirCollisionCell,
     commitBatch,
     discardBatch,
     captureSnapshot,

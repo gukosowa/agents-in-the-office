@@ -209,6 +209,32 @@ async function onDrop(e: DragEvent) {
   }
 }
 
+// ---- Event descriptions ----
+const EVENT_DESCRIPTIONS: Record<string, string> = {
+  session_start: 'Agent session begins.',
+  session_end: 'Agent session ends or is interrupted.',
+  prompt_submit: 'User submits a prompt to the agent.',
+  tool_start: 'Agent begins executing a tool (e.g. Bash, Read, Edit).',
+  tool_end: 'Agent finishes executing a tool.',
+  turn_end: 'Agent completes a full response turn.',
+  permission_wait: 'Agent pauses waiting for the user to approve a tool call.',
+  subagent_start: 'A subagent is spawned by the parent agent.',
+  subagent_end: 'A subagent finishes its work.',
+  idle_notification: 'Agent has been idle and sends a nudge notification.',
+  elicitation_wait: 'Agent pauses waiting for user input.',
+  auth_success: 'Authentication to an external service succeeds.',
+  worktree_create: 'A new git worktree is created.',
+  worktree_remove: 'A git worktree is removed.',
+  teammate_idle: "A teammate's agent session goes idle.",
+  task_completed: 'Agent marks a task as completed.',
+};
+
+const activeInfoPopover = ref<string | null>(null);
+
+function toggleInfoPopover(cat: string) {
+  activeInfoPopover.value = activeInfoPopover.value === cat ? null : cat;
+}
+
 // ---- Right panel: categories ----
 const selectedPackInfo = computed(() =>
   soundStore.packs.find((p) => p.name === selectedPack.value) ?? null,
@@ -457,6 +483,26 @@ watch(selectedPack, async () => {
                     @change="toggleCategoryEnabled(cat, ($event.target as HTMLInputElement).checked)"
                   />
                   <span class="text-sm text-gray-300 font-mono flex-1">{{ cat }}</span>
+                  <!-- Info icon + popover -->
+                  <span
+                    v-if="EVENT_DESCRIPTIONS[cat]"
+                    class="relative"
+                    @click.stop
+                  >
+                    <span
+                      class="w-4 h-4 flex items-center justify-center rounded-full border text-[10px] leading-none cursor-pointer select-none"
+                      :class="activeInfoPopover === cat
+                        ? 'border-indigo-400 text-indigo-300 bg-indigo-900/40'
+                        : 'border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-200'"
+                      @click="toggleInfoPopover(cat)"
+                    >i</span>
+                    <div
+                      v-if="activeInfoPopover === cat"
+                      class="absolute right-0 top-6 z-50 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg px-3 py-2 text-xs text-gray-200 leading-relaxed"
+                    >
+                      {{ EVENT_DESCRIPTIONS[cat] }}
+                    </div>
+                  </span>
                   <span
                     v-if="(selectedPackInfo.categories[cat]?.length ?? 0) > 0"
                     class="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"

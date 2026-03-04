@@ -9,6 +9,7 @@ import type {
   TileDepth,
   DepthMap,
   TileCollisionMap,
+  TileDirCollisionMap,
   TileInteractiveMap,
   TileInteractiveDef,
   Direction,
@@ -74,6 +75,15 @@ export function createEmptyCollisionGrid(
   return Array(h).fill(null).map(() => Array(w).fill(false));
 }
 
+export function createEmptyDirCollisionGrid(
+  w: number, h: number,
+): number[][] {
+  return Array.from(
+    { length: h },
+    () => new Array<number>(w).fill(0),
+  );
+}
+
 export const useMapStore = defineStore('map', () => {
   const tileSize = ref(DEFAULT_TILE_SIZE);
   const width = ref(20);
@@ -91,6 +101,7 @@ export const useMapStore = defineStore('map', () => {
   const objects = ref<InteractiveObject[]>([]);
   const spawnPoints = ref<SpawnPoint[]>([]);
   const collisionGrid = ref<boolean[][]>(createEmptyCollisionGrid(20, 15));
+  const dirCollisionGrid = ref<number[][]>(createEmptyDirCollisionGrid(20, 15));
 
   const tilesetPool = ref<Record<string, TilesetSlot>>({
     A: { image: null, blob: null },
@@ -102,6 +113,7 @@ export const useMapStore = defineStore('map', () => {
   const autoTilePool = ref<AutoTileSlot[]>([]);
   const tileDepthMaps = ref<Record<string, DepthMap>>({});
   const tileCollisionMaps = ref<Record<string, TileCollisionMap>>({});
+  const tileDirCollisionMaps = ref<Record<string, TileDirCollisionMap>>({});
   const tileInteractiveMaps = ref<Record<string, TileInteractiveMap>>({});
 
   // Bumped on every mutation; watched instead of deep-traversing data
@@ -223,6 +235,17 @@ export const useMapStore = defineStore('map', () => {
     }
     collisionGrid.value = newGrid;
 
+    // Resize directional collision grid
+    const newDirGrid = createEmptyDirCollisionGrid(newWidth, newHeight);
+    for (let y = 0; y < Math.min(dirCollisionGrid.value.length, newHeight); y++) {
+      const row = dirCollisionGrid.value[y];
+      if (!row) continue;
+      for (let x = 0; x < Math.min(row.length, newWidth); x++) {
+        if (newDirGrid[y]) newDirGrid[y]![x] = row[x] ?? 0;
+      }
+    }
+    dirCollisionGrid.value = newDirGrid;
+
     // Filter out of bounds objects and spawn points
     objects.value = objects.value.filter(obj => obj.x < newWidth && obj.y < newHeight);
     spawnPoints.value = spawnPoints.value.filter(sp => sp.x < newWidth && sp.y < newHeight);
@@ -318,6 +341,27 @@ export const useMapStore = defineStore('map', () => {
     const row = collisionGrid.value[y];
     if (row) row[x] = !row[x];
     markDirty();
+  }
+
+  function setDirCollision(x: number, y: number, mask: number) {
+    if (x < 0 || x >= width.value || y < 0 || y >= height.value) return;
+    const row = dirCollisionGrid.value[y];
+    if (!row || row[x] === mask) return;
+    row[x] = mask;
+    markDirty();
+  }
+
+  function toggleDirCollisionBit(x: number, y: number, bit: number) {
+    if (x < 0 || x >= width.value || y < 0 || y >= height.value) return;
+    const row = dirCollisionGrid.value[y];
+    if (!row) return;
+    row[x] = (row[x] ?? 0) ^ bit;
+    markDirty();
+  }
+
+  function getDirCollision(x: number, y: number): number {
+    if (x < 0 || x >= width.value || y < 0 || y >= height.value) return 0;
+    return dirCollisionGrid.value[y]?.[x] ?? 0;
   }
 
   function fillCollision(x: number, y: number, blocked: boolean) {
@@ -425,6 +469,46 @@ export const useMapStore = defineStore('map', () => {
     return grid;
   }
 
+  let cachedDirCollisionVersion = -1;
+  let cachedDirCollisionGrid: number[][] = [];
+
+  function getEffectiveDirCollisionGrid(): number[][] {
+    const ver = dirtyVersion.value;
+    if (ver === cachedDirCollisionVersion) {
+      return cachedDirCollisionGrid;
+    }
+
+    const w = width.value;
+    const h = height.value;
+    const rawDirGrid = toRaw(dirCollisionGrid.value);
+    const rawLayers = toRaw(layers.value);
+    const dirMaps = tileDirCollisionMaps.value;
+    const grid: number[][] = Array.from(
+      { length: h },
+      () => new Array<number>(w).fill(0),
+    );
+
+    for (let y = 0; y < h; y++) {
+      const manualRow = rawDirGrid[y];
+      for (let x = 0; x < w; x++) {
+        let mask = manualRow?.[x] ?? 0;
+        for (const layer of rawLayers) {
+          const cell = layer?.[y]?.[x];
+          if (!cell || !isRegularTile(cell)) continue;
+          const dirMap = dirMaps[cell.slot];
+          if (!dirMap) continue;
+          const tileMask = dirMap[`${cell.x},${cell.y}`];
+          if (tileMask) mask |= tileMask;
+        }
+        grid[y]![x] = mask;
+      }
+    }
+
+    cachedDirCollisionVersion = ver;
+    cachedDirCollisionGrid = grid;
+    return grid;
+  }
+
   function expandMap(
     left: number, top: number, right: number, bottom: number,
   ) {
@@ -461,6 +545,17 @@ export const useMapStore = defineStore('map', () => {
       }
     }
     collisionGrid.value = newGrid;
+
+    const newDirGrid = createEmptyDirCollisionGrid(newWidth, newHeight);
+    for (let y = 0; y < dirCollisionGrid.value.length; y++) {
+      const row = dirCollisionGrid.value[y];
+      if (!row) continue;
+      for (let x = 0; x < row.length; x++) {
+        const nr = newDirGrid[y + et];
+        if (nr) nr[x + el] = row[x] ?? 0;
+      }
+    }
+    dirCollisionGrid.value = newDirGrid;
 
     if (el > 0 || et > 0) {
       objects.value = objects.value.map(obj => ({
@@ -702,6 +797,31 @@ export const useMapStore = defineStore('map', () => {
     markDirty();
   }
 
+  function getTileDirCollision(
+    slot: string, cx: number, cy: number,
+  ): number {
+    return tileDirCollisionMaps.value[slot]?.[`${cx},${cy}`] ?? 0;
+  }
+
+  function toggleTileDirCollisionBit(
+    slot: string, cx: number, cy: number, bit: number,
+  ) {
+    const key = `${cx},${cy}`;
+    const map = { ...(tileDirCollisionMaps.value[slot] ?? {}) };
+    const current = map[key] ?? 0;
+    const next = current ^ bit;
+    if (next === 0) {
+      delete map[key];
+    } else {
+      map[key] = next;
+    }
+    tileDirCollisionMaps.value = {
+      ...tileDirCollisionMaps.value,
+      [slot]: map,
+    };
+    markDirty();
+  }
+
   function getTileInteractive(
     slot: string, cx: number, cy: number,
   ): TileInteractiveDef | null {
@@ -874,6 +994,7 @@ export const useMapStore = defineStore('map', () => {
     tilesetPool.value = rest;
     delete tileDepthMaps.value[slotKey];
     delete tileCollisionMaps.value[slotKey];
+    delete tileDirCollisionMaps.value[slotKey];
     delete tileInteractiveMaps.value[slotKey];
     return true;
   }
@@ -1139,6 +1260,19 @@ export const useMapStore = defineStore('map', () => {
     }
     collisionGrid.value = newGrid;
 
+    const rawDirGrid = toRaw(dirCollisionGrid.value);
+    const newDirGrid = createEmptyDirCollisionGrid(newW, newH);
+    for (let y = 0; y < newH; y++) {
+      const srcRow = rawDirGrid[y + trimTop];
+      if (!srcRow) continue;
+      const destRow = newDirGrid[y];
+      if (!destRow) continue;
+      for (let x = 0; x < newW; x++) {
+        destRow[x] = srcRow[x + trimLeft] ?? 0;
+      }
+    }
+    dirCollisionGrid.value = newDirGrid;
+
     if (trimLeft > 0 || trimTop > 0) {
       objects.value = objects.value.map(obj => ({
         ...obj, x: obj.x - trimLeft, y: obj.y - trimTop,
@@ -1203,6 +1337,22 @@ export const useMapStore = defineStore('map', () => {
       }
     }
     collisionGrid.value = newGrid;
+
+    const newDirGrid = createEmptyDirCollisionGrid(nw, nh);
+    for (let ny = 0; ny < nh; ny++) {
+      const oy = ny + srcOffsetY;
+      if (oy < 0 || oy >= height.value) continue;
+      const srcRow = dirCollisionGrid.value[oy];
+      if (!srcRow) continue;
+      const destRow = newDirGrid[ny];
+      if (!destRow) continue;
+      for (let nx = 0; nx < nw; nx++) {
+        const ox = nx + srcOffsetX;
+        if (ox < 0 || ox >= width.value) continue;
+        destRow[nx] = srcRow[ox] ?? 0;
+      }
+    }
+    dirCollisionGrid.value = newDirGrid;
 
     objects.value = objects.value
       .map(obj => ({
@@ -1340,6 +1490,7 @@ export const useMapStore = defineStore('map', () => {
     objects,
     spawnPoints,
     collisionGrid,
+    dirCollisionGrid,
     tilesetPool,
     autoTilePool,
     resizeMap,
@@ -1380,6 +1531,9 @@ export const useMapStore = defineStore('map', () => {
     setCollision,
     toggleCollision,
     fillCollision,
+    setDirCollision,
+    toggleDirCollisionBit,
+    getDirCollision,
     getEffectiveCollisionGrid,
     shrinkMap,
     tileDepthMaps,
@@ -1388,6 +1542,10 @@ export const useMapStore = defineStore('map', () => {
     tileCollisionMaps,
     getTileCollision,
     toggleTileCollision,
+    tileDirCollisionMaps,
+    getTileDirCollision,
+    toggleTileDirCollisionBit,
+    getEffectiveDirCollisionGrid,
     tileInteractiveMaps,
     getTileInteractive,
     setTileInteractive,

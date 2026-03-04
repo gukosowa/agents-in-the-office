@@ -2,7 +2,7 @@ import {
   DOOR_TYPES,
   type Direction, type InteractiveObject, type MapData,
 } from '../types';
-import { findPath, type Point } from '../utils/pathfinding';
+import { findPath, isDirPassable, type Point } from '../utils/pathfinding';
 import type { Locale } from '../stores/localeStore';
 import {
   getWalkingThoughts,
@@ -478,12 +478,12 @@ export class Character {
     const newPath = findPath(
       start, dest,
       mapData.width, mapData.height,
-      (x, y) => {
+      (x, y, fx, fy) => {
         if (sitInside && x === dest.x && y === dest.y) {
           return true;
         }
         return this.isCellWalkable(
-          mapData, x, y, occupiedCells,
+          mapData, x, y, occupiedCells, fx, fy,
         );
       },
     );
@@ -772,13 +772,13 @@ export class Character {
     const path = findPath(
       start, dest,
       mapData.width, mapData.height,
-      (x, y) => {
+      (x, y, fx, fy) => {
         if (
           sitInside
           && x === targetObj.x && y === targetObj.y
         ) return true;
         return this.isCellWalkable(
-          mapData, x, y, occupiedCells,
+          mapData, x, y, occupiedCells, fx, fy,
         );
       },
     );
@@ -838,8 +838,8 @@ export class Character {
       const path = findPath(
         start, { x: tx, y: ty },
         mapData.width, mapData.height,
-        (x, y) => this.isCellWalkable(
-          mapData, x, y, occupiedCells,
+        (x, y, fx, fy) => this.isCellWalkable(
+          mapData, x, y, occupiedCells, fx, fy,
         ),
       );
       if (path.length > 0) {
@@ -886,10 +886,10 @@ export class Character {
     const path = findPath(
       start, dest,
       mapData.width, mapData.height,
-      (x, y) => {
+      (x, y, fx, fy) => {
         if (x === dest.x && y === dest.y) return true;
         return this.isCellWalkable(
-          mapData, x, y, occupiedCells,
+          mapData, x, y, occupiedCells, fx, fy,
         );
       },
     );
@@ -997,6 +997,8 @@ export class Character {
     x: number,
     y: number,
     occupiedCells: Set<string>,
+    fromX?: number,
+    fromY?: number,
   ): boolean {
     if (
       x < 0 || x >= mapData.width
@@ -1012,6 +1014,16 @@ export class Character {
       if (mapData.objects.some(o => o.x === x && o.y === y)) {
         return false;
       }
+    }
+
+    if (
+      fromX !== undefined && fromY !== undefined
+      && mapData.directionalCollisionGrid
+    ) {
+      if (!isDirPassable(
+        mapData.directionalCollisionGrid,
+        fromX, fromY, x, y,
+      )) return false;
     }
 
     if (!this.ignoresCharacterCollision) {
@@ -1176,8 +1188,8 @@ export class Character {
       const path = findPath(
         start, cell,
         mapData.width, mapData.height,
-        (x, y) => this.isCellWalkable(
-          mapData, x, y, occupiedCells,
+        (x, y, fx, fy) => this.isCellWalkable(
+          mapData, x, y, occupiedCells, fx, fy,
         ),
       );
       if (path.length > 0 && path.length <= 15) {

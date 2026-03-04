@@ -79,9 +79,11 @@ function getMapData(): MapData {
     layerMeta: mapStore.layerMeta,
     objects: mapStore.objects,
     collisionGrid: mapStore.collisionGrid,
+    directionalCollisionGrid: mapStore.dirCollisionGrid,
     spawnPoints: mapStore.spawnPoints,
     tileDepthMaps: mapStore.tileDepthMaps,
     tileCollisionMaps: mapStore.tileCollisionMaps,
+    tileDirCollisionMaps: mapStore.tileDirCollisionMaps,
     tileInteractiveMaps: mapStore.tileInteractiveMaps,
   })) as MapData;
 }
@@ -121,9 +123,14 @@ function restoreMapData(data: MapData) {
     ?? Array.from({ length: data.height }, () =>
         Array(data.width).fill(false) as boolean[],
       );
+  mapStore.dirCollisionGrid = data.directionalCollisionGrid
+    ?? Array.from({ length: data.height }, () =>
+        new Array<number>(data.width).fill(0),
+      );
   mapStore.spawnPoints = data.spawnPoints ?? [];
   mapStore.tileDepthMaps = data.tileDepthMaps ?? {};
   mapStore.tileCollisionMaps = data.tileCollisionMaps ?? {};
+  mapStore.tileDirCollisionMaps = data.tileDirCollisionMaps ?? {};
   mapStore.tileInteractiveMaps = data.tileInteractiveMaps ?? {};
 }
 
@@ -213,6 +220,9 @@ const confirmNewMap = () => {
   mapStore.objects = [];
   mapStore.spawnPoints = [];
   mapStore.collisionGrid = emptyCollision(20, 15);
+  mapStore.dirCollisionGrid = Array.from(
+    { length: 15 }, () => new Array<number>(20).fill(0),
+  );
   mapStore.tilesetPool = {
     A: { image: null, blob: null },
     B: { image: null, blob: null },
@@ -222,6 +232,7 @@ const confirmNewMap = () => {
   mapStore.autoTilePool = [];
   mapStore.tileDepthMaps = {};
   mapStore.tileCollisionMaps = {};
+  mapStore.tileDirCollisionMaps = {};
   mapStore.tileInteractiveMaps = {};
   characterStore.setCharacters([]);
   editorStore.resetEditorState();

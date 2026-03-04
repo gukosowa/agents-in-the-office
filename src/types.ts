@@ -32,6 +32,12 @@ export interface LayerMeta {
 
 export type Direction = 'down' | 'up' | 'right' | 'left';
 
+// Directional collision bitmask: set bit = blocked edge
+export const DIR_UP = 1;
+export const DIR_RIGHT = 2;
+export const DIR_DOWN = 4;
+export const DIR_LEFT = 8;
+
 export interface InteractiveObject {
   id: string;
   x: number; // grid x
@@ -68,15 +74,18 @@ export interface MapData {
   layerMeta?: LayerMeta[];
   objects: InteractiveObject[];
   collisionGrid?: boolean[][]; // per-cell blocked flag (true = blocked)
+  directionalCollisionGrid?: number[][]; // per-cell 4-bit mask (DIR_UP|DIR_RIGHT|DIR_DOWN|DIR_LEFT)
   spawnPoints?: SpawnPoint[];
   tileDepthMaps?: Record<string, DepthMap>; // slot -> DepthMap
   tileCollisionMaps?: Record<string, TileCollisionMap>;
   tileInteractiveMaps?: Record<string, TileInteractiveMap>;
+  tileDirCollisionMaps?: Record<string, TileDirCollisionMap>;
 }
 
 export type TileDepth = -1 | 0 | 1 | 2;
 export type DepthMap = Record<string, TileDepth>; // "x,y" -> depth
 export type TileCollisionMap = Record<string, boolean>; // "x,y" -> blocked
+export type TileDirCollisionMap = Record<string, number>; // "x,y" -> 4-bit mask
 
 export interface TileInteractiveDef {
   type: string;

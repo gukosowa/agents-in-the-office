@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useEditorStore } from '../stores/editorStore';
 import type { ToolType } from '../types';
 import {
-  Pen, Eraser, PaintBucket, Ban,
+  Pen, Eraser, PaintBucket, Ban, Compass,
   RectangleHorizontal, Slash,
   Move, UserRound, Pipette,
   FlipHorizontal2, FlipVertical2, RotateCw,
@@ -93,12 +93,39 @@ const lineApplicable = computed(
       class="relative p-1.5 rounded transition-colors"
       @click="
         editorStore.showCollision = !editorStore.showCollision;
-        if (editorStore.showCollision)
+        if (editorStore.showCollision) {
+          editorStore.showDirCollision = false;
           editorStore.clearMultiSelections();
+        }
       "
     >
       <Ban :size="18" />
       <span class="shortcut-badge">T</span>
+    </button>
+
+    <!-- Directional collision toggle -->
+    <button
+      :title="
+        editorStore.showDirCollision
+          ? 'Hide Dir Collision (Y)'
+          : 'Show Dir Collision (Y)'
+      "
+      :class="
+        editorStore.showDirCollision
+          ? 'bg-blue-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="
+        editorStore.showDirCollision = !editorStore.showDirCollision;
+        if (editorStore.showDirCollision) {
+          editorStore.showCollision = false;
+          editorStore.clearMultiSelections();
+        }
+      "
+    >
+      <Compass :size="18" />
+      <span class="shortcut-badge">Y</span>
     </button>
 
     <div class="border-t border-gray-600 w-5 my-0.5" />

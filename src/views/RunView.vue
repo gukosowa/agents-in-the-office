@@ -831,6 +831,7 @@ const update = (time: number) => {
       layers: mapStore.layers,
       objects: mapStore.getEffectiveObjects(),
       collisionGrid: mapStore.getEffectiveCollisionGrid(),
+      directionalCollisionGrid: mapStore.getEffectiveDirCollisionGrid(),
   };
 
   const occupied = getOccupiedCells();
@@ -1816,6 +1817,13 @@ onMounted(async () => {
           ?? Array.from({ length: result.mapData.height }, () =>
               Array(result.mapData.width).fill(false) as boolean[],
             );
+        mapStore.dirCollisionGrid =
+          result.mapData.directionalCollisionGrid
+          ?? Array.from({ length: result.mapData.height }, () =>
+              new Array<number>(result.mapData.width).fill(0),
+            );
+        mapStore.tileDirCollisionMaps =
+          result.mapData.tileDirCollisionMaps ?? {};
         mapStore.spawnPoints = result.mapData.spawnPoints ?? [];
         mapStore.tileDepthMaps = result.mapData.tileDepthMaps ?? {};
         mapStore.tileCollisionMaps =

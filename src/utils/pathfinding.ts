@@ -1,3 +1,7 @@
+import {
+  DIR_UP, DIR_RIGHT, DIR_DOWN, DIR_LEFT,
+} from '../types';
+
 export interface Point {
   x: number;
   y: number;
@@ -16,6 +20,37 @@ function heuristic(a: Point, b: Point): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
+/**
+ * Check if movement from (fromX,fromY) to (toX,toY) is allowed
+ * by directional collision masks.
+ * Returns true if passable, false if blocked.
+ */
+export function isDirPassable(
+  grid: number[][],
+  fromX: number, fromY: number,
+  toX: number, toY: number,
+): boolean {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+
+  const srcMask = grid[fromY]?.[fromX] ?? 0;
+  const dstMask = grid[toY]?.[toX] ?? 0;
+
+  if (dx === 1) {
+    if ((srcMask & DIR_RIGHT) || (dstMask & DIR_LEFT)) return false;
+  } else if (dx === -1) {
+    if ((srcMask & DIR_LEFT) || (dstMask & DIR_RIGHT)) return false;
+  }
+
+  if (dy === 1) {
+    if ((srcMask & DIR_DOWN) || (dstMask & DIR_UP)) return false;
+  } else if (dy === -1) {
+    if ((srcMask & DIR_UP) || (dstMask & DIR_DOWN)) return false;
+  }
+
+  return true;
+}
+
 const MAX_NODES = 2000;
 
 export function findPath(
@@ -23,7 +58,10 @@ export function findPath(
   end: Point,
   width: number,
   height: number,
-  isWalkable: (x: number, y: number) => boolean,
+  isWalkable: (
+    x: number, y: number,
+    fromX?: number, fromY?: number,
+  ) => boolean,
 ): Point[] {
   const openSet = new Set<string>();
   const cameFrom = new Map<string, string>();
@@ -77,7 +115,7 @@ export function findPath(
 
     for (const n of neighbors) {
       if (n.x < 0 || n.x >= width || n.y < 0 || n.y >= height) continue;
-      if (!isWalkable(n.x, n.y)) continue;
+      if (!isWalkable(n.x, n.y, current.x, current.y)) continue;
 
       const nKey = getKey(n);
       const tentativeG = (gScore.get(currentKey) ?? Infinity) + 1;

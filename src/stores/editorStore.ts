@@ -38,6 +38,7 @@ export const useEditorStore = defineStore('editor', () => {
   const tileFlipY = ref(false);
   const tileRotation = ref<0 | 90 | 180 | 270>(0);
   const showCollision = ref(false);
+  const showDirCollision = ref(false);
   const showGrid = ref(true);
   const showInteractiveLayer = ref(false);
   const previewMode = ref(false);
@@ -149,6 +150,7 @@ export const useEditorStore = defineStore('editor', () => {
     tileRotation.value = 0;
     mapSelection.value = null;
     showCollision.value = false;
+    showDirCollision.value = false;
     showInteractiveLayer.value = false;
     clipboard.value = null;
     selectedTile.value = null;
@@ -188,6 +190,7 @@ export const useEditorStore = defineStore('editor', () => {
     tileScrollHint,
     selectionPulse,
     showCollision,
+    showDirCollision,
     showGrid,
     showInteractiveLayer,
     previewMode,
