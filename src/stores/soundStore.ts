@@ -364,13 +364,20 @@ export const useSoundStore = defineStore('sound', () => {
 
     // Find the pack info
     const packInfo = packs.value.find((p) => p.name === packName);
-    const files = packInfo?.categories[category] ?? [];
+    if (!packInfo) return;
 
-    // Filter to enabled tracks
-    const enabledFiles = files.filter((filename) => {
-      const key = `${category}/${filename}`;
-      return getTrackConfig(packName, key).enabled;
-    });
+    // Look up manifest assignments for this event type
+    const assignedFiles = packInfo.manifest.assignments
+      .filter((a) => a.event === event.type)
+      .map((a) => a.file);
+
+    // Build a lookup map for manifest sound defaults
+    const manifestSoundMap = new Map(packInfo.manifest.sounds.map((s) => [s.file, s]));
+
+    // Filter to enabled files using two-layer rule (soundOverrides → manifest default)
+    const enabledFiles = assignedFiles.filter((filename) =>
+      isEnabled(packName, filename, manifestSoundMap.get(filename)),
+    );
 
     if (enabledFiles.length === 0) return;
 
@@ -378,16 +385,25 @@ export const useSoundStore = defineStore('sound', () => {
     const chosenFile = enabledFiles[randomFileIdx];
     if (chosenFile === undefined) return;
 
-    const filePath = `${soundPacksDir}/${packName}/${category}/${chosenFile}`;
+    // Files live at pack root, not in category subdirectories
+    const filePath = `${soundPacksDir}/${packName}/${chosenFile}`;
+
+    // Skip missing file with a warning — no crash
+    const fileOnDisk = await exists(filePath);
+    if (!fileOnDisk) {
+      console.warn(`[soundStore] Sound file not found on disk, skipping: ${filePath}`);
+      return;
+    }
+
     const buffer = await loadBuffer(filePath);
     if (!buffer) return;
 
-    const trackKey = `${category}/${chosenFile}`;
-    const trackCfg = getTrackConfig(packName, trackKey);
+    const manifestSound = manifestSoundMap.get(chosenFile);
+    const vol = effectiveVolume(packName, chosenFile, manifestSound);
     const ctx = getAudioContext();
 
     const gainNode = ctx.createGain();
-    gainNode.gain.value = config.value.globalVolume * trackCfg.volume;
+    gainNode.gain.value = config.value.globalVolume * vol;
     gainNode.connect(ctx.destination);
 
     const source = ctx.createBufferSource();
