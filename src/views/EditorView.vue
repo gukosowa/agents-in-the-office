@@ -7,6 +7,7 @@ import VerticalToolbar from "../components/VerticalToolbar.vue";
 import ObjectDialog from "../components/ObjectDialog.vue";
 import AgentSetupDialog from "../components/AgentSetupDialog.vue";
 import CharacterEditorDialog from "../components/CharacterEditorDialog.vue";
+import SoundsDialog from "../components/SoundsDialog.vue";
 import { useEditorStore } from "../stores/editorStore";
 import { useMapStore } from "../stores/mapStore";
 import { useUndoStore } from "../stores/undoStore";
@@ -29,6 +30,7 @@ const characterStore = useCharacterStore();
 const canvasContainer = ref<HTMLElement | null>(null);
 const agentSetupOpen = ref(false);
 const characterEditorOpen = ref(false);
+const soundsDialogOpen = ref(false);
 const savedFilePath = ref<string | null>(
   localStorage.getItem(AITO_FILE_PATH_KEY),
 );
@@ -495,6 +497,10 @@ onUnmounted(() => {
         <div class="ml-auto shrink-0 flex items-center gap-2">
           <button
             class="px-3 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-sm font-semibold whitespace-nowrap"
+            @click="soundsDialogOpen = true"
+          >Sounds</button>
+          <button
+            class="px-3 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-sm font-semibold whitespace-nowrap"
             @click="characterEditorOpen = true"
           >Characters</button>
           <div class="border-l border-gray-600 h-5"></div>
@@ -553,6 +559,11 @@ onUnmounted(() => {
     <CharacterEditorDialog
       v-if="characterEditorOpen"
       @close="characterEditorOpen = false"
+    />
+
+    <SoundsDialog
+      v-if="soundsDialogOpen"
+      @close="soundsDialogOpen = false"
     />
 
     <!-- Zoom controls - floating bottom right -->
