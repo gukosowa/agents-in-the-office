@@ -700,8 +700,29 @@ const render = () => {
   const rawSpawnPoints = toRaw(mapStore.spawnPoints) as SpawnPoint[];
   const rawAutoTilePool = toRaw(mapStore.autoTilePool) as AutoTileSlot[];
 
-  for (let i = 0; i < rawLayers.length; i++) {
-    drawLayer(ctx, i, rawLayers, rawLayerMeta, rawAutoTilePool, ts);
+  if (editorStore.previewMode) {
+    // Layer 0: draw directly (ground)
+    const layer0 = rawLayers[0];
+    if (layer0 && rawLayerMeta[0]?.visible !== false) {
+      drawLayerContent(ctx, 0, layer0, rawAutoTilePool, ts, editorStore.zoom);
+    }
+    // Layers 1+: depth Y-sorted, mirrors RunView rendering
+    const previewRenderables: Renderable[] = [];
+    for (let i = 1; i < rawLayers.length; i++) {
+      const meta = rawLayerMeta[i];
+      if (meta && !meta.visible) continue;
+      const layer = rawLayers[i];
+      if (!layer) continue;
+      previewRenderables.push(
+        ...collectPreviewRenderables(i, layer, rawAutoTilePool, ts, editorStore.zoom),
+      );
+    }
+    previewRenderables.sort((a, b) => a.y - b.y);
+    for (const r of previewRenderables) r.draw(ctx);
+  } else {
+    for (let i = 0; i < rawLayers.length; i++) {
+      drawLayer(ctx, i, rawLayers, rawLayerMeta, rawAutoTilePool, ts);
+    }
   }
   if (editorStore.showInteractiveLayer) {
     drawObjects(ctx, rawObjects, ts);
@@ -1349,6 +1370,95 @@ const drawLayerContent = (
       }
     }
   }
+};
+
+type Renderable = { y: number; draw: (c: CanvasRenderingContext2D) => void };
+
+const collectPreviewRenderables = (
+  layerIndex: number,
+  layer: CellValue[][],
+  rawAutoTilePool: AutoTileSlot[],
+  ts: number,
+  zoom: number,
+): Renderable[] => {
+  const snap = (n: number) => Math.round(n * zoom) / zoom;
+  const snapSz = (a: number, b: number) =>
+    (Math.round(b * zoom) - Math.round(a * zoom)) / zoom;
+  const renderables: Renderable[] = [];
+  const mh = mapStore.height;
+  for (let y = 0; y < layer.length; y++) {
+    const row = layer[y];
+    if (!row) continue;
+    for (let x = 0; x < row.length; x++) {
+      const cell = row[x];
+      if (!cell) continue;
+      const tileX = x;
+      const tileY = y;
+      if (isRegularTile(cell)) {
+        const img = mapStore.getSlotImage(cell.slot);
+        if (!img) continue;
+        const depth = mapStore.getTileDepth(cell.slot, cell.x, cell.y);
+        let sortY: number;
+        if (depth === -1) {
+          sortY = -1;
+        } else if (depth === 2) {
+          sortY = mh * ts + ts + 1;
+        } else if (depth === 1) {
+          sortY = tileY * ts + ts * 2 - 1;
+        } else {
+          sortY = tileY * ts + ts;
+        }
+        const { flipX, flipY, rotation } = cell;
+        renderables.push({
+          y: sortY,
+          draw: (c) => {
+            drawTileTransformed(
+              c, img,
+              cell.x * ts, cell.y * ts, ts, ts,
+              snap(tileX * ts), snap(tileY * ts),
+              snapSz(tileX * ts, (tileX + 1) * ts),
+              snapSz(tileY * ts, (tileY + 1) * ts),
+              flipX ?? false, flipY ?? false, rotation ?? 0,
+            );
+          },
+        });
+      } else if (isAutoTile(cell)) {
+        const atSlot = rawAutoTilePool[cell.autoTileIndex];
+        if (!atSlot?.image) continue;
+        const atImg = atSlot.image;
+        const atType = atSlot.type;
+        const atDepth = mapStore.getAutoTileDepth(cell.autoTileIndex);
+        const variant = mapStore.getAutoTileVariant(
+          layerIndex, tileX, tileY, cell.autoTileIndex, layer,
+        );
+        const wv = atType === 'C'
+          ? mapStore.getWallVariant(layerIndex, tileX, tileY, cell.autoTileIndex, layer)
+          : undefined;
+        let sortY: number;
+        if (atDepth === -1) {
+          sortY = -1;
+        } else if (atDepth === 2) {
+          sortY = mh * ts + ts + 1;
+        } else if (atDepth === 1) {
+          sortY = tileY * ts + ts * 2 - 1;
+        } else {
+          sortY = tileY * ts + ts;
+        }
+        renderables.push({
+          y: sortY,
+          draw: (c) => {
+            drawAutoTileCell(
+              c, atImg, variant,
+              snap(tileX * ts), snap(tileY * ts),
+              ts, atType, wv,
+              tileY, mh, zoom, tileX,
+            );
+          },
+        });
+      }
+    }
+  }
+  return renderables;
 };
 
 let offscreenCanvas: OffscreenCanvas | null = null;
