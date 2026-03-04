@@ -43,10 +43,29 @@ export interface SoundConfig {
   tracks: Record<string, Record<string, TrackConfig>>;
 }
 
+export interface PackManifestSound {
+  file: string;
+  volume: number;
+  enabled: boolean;
+}
+
+export interface PackManifestAssignment {
+  file: string;
+  event: AgentEventType;
+}
+
+export interface PackManifest {
+  sounds: PackManifestSound[];
+  assignments: PackManifestAssignment[];
+}
+
 export interface PackInfo {
   name: string;
   categories: Record<string, string[]>;
+  manifest: PackManifest;
+  hasManifest: boolean;
 }
+
 
 const DEFAULT_CONFIG: SoundConfig = {
   enabled: true,
@@ -122,6 +141,31 @@ export const useSoundStore = defineStore('sound', () => {
   }
 
   // -------------------------------------------------------------------------
+  // Pack manifest read/write
+  // -------------------------------------------------------------------------
+
+  async function loadPackManifest(packName: string): Promise<PackManifest> {
+    const manifestPath = `${soundPacksDir}/${packName}/manifest.json`;
+    const manifestExists = await exists(manifestPath);
+    if (!manifestExists) return { sounds: [], assignments: [] };
+    try {
+      const raw = await readTextFile(manifestPath);
+      const parsed = JSON.parse(raw) as Partial<PackManifest>;
+      return {
+        sounds: Array.isArray(parsed.sounds) ? parsed.sounds : [],
+        assignments: Array.isArray(parsed.assignments) ? parsed.assignments : [],
+      };
+    } catch {
+      return { sounds: [], assignments: [] };
+    }
+  }
+
+  async function savePackManifest(packName: string, manifest: PackManifest): Promise<void> {
+    const manifestPath = `${soundPacksDir}/${packName}/manifest.json`;
+    await writeTextFile(manifestPath, JSON.stringify(manifest, null, 2));
+  }
+
+  // -------------------------------------------------------------------------
   // Pack scanning
   // -------------------------------------------------------------------------
 
@@ -138,6 +182,9 @@ export const useSoundStore = defineStore('sound', () => {
       const packName = entry.name;
       const packPath = `${soundPacksDir}/${packName}`;
       const categories: Record<string, string[]> = {};
+
+      const manifest = await loadPackManifest(packName);
+      const hasManifest = await exists(`${packPath}/manifest.json`);
 
       const catEntries = await readDir(packPath);
       for (const cat of catEntries) {
@@ -160,7 +207,7 @@ export const useSoundStore = defineStore('sound', () => {
         }
       }
 
-      discovered.push({ name: packName, categories });
+      discovered.push({ name: packName, categories, manifest, hasManifest });
     }
 
     packs.value = discovered;
@@ -328,6 +375,8 @@ export const useSoundStore = defineStore('sound', () => {
     init,
     saveConfig,
     scanPacks,
+    loadPackManifest,
+    savePackManifest,
     getTrackConfig,
     setTrackConfig,
     getSoundPacksDir,
