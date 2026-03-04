@@ -137,9 +137,12 @@ function toggleMessage(msg: { id: string; fullText?: string; text: string }): vo
         class="flex items-center gap-2"
       >
         <button
-          class="px-3 py-1 rounded-lg bg-gray-900/60 backdrop-blur border border-gray-700/40 text-gray-400 hover:text-white hover:bg-gray-800/70 transition-colors font-mono text-xs flex items-center justify-center shadow-lg shrink-0"
+          class="px-2 py-1 rounded-md font-mono text-[10px] font-bold uppercase tracking-wide shrink-0 flex items-center gap-1.5 cursor-pointer transition-colors"
+          :class="agentStatus === 'working'
+            ? 'bg-green-500/80 text-white hover:bg-green-500'
+            : 'bg-gray-700/80 text-gray-400 hover:bg-gray-600/80 hover:text-white'"
           @click="minimized = false"
-        >Log</button>
+        >{{ agentStatus }}<span class="text-[9px] opacity-70">></span></button>
         <div
           v-if="latestPromptFirstLine"
           class="rounded-lg bg-gray-800/70 hover:bg-blue-600/90 backdrop-blur border border-gray-600/40 hover:border-blue-500/30 text-white font-mono text-xs shadow-lg cursor-pointer transition-all overflow-hidden"
@@ -148,12 +151,6 @@ function toggleMessage(msg: { id: string; fullText?: string; text: string }): vo
             : 'px-3 py-1 min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis'"
           @click="miniPromptExpanded = !miniPromptExpanded"
         >{{ miniPromptExpanded ? latestPromptText : latestPromptFirstLine }}</div>
-        <div
-          class="px-2 py-1 rounded-md font-mono text-[10px] font-bold uppercase tracking-wide shrink-0"
-          :class="agentStatus === 'working'
-            ? 'bg-green-500/80 text-white'
-            : 'bg-gray-700/80 text-gray-400'"
-        >{{ agentStatus }}</div>
       </div>
 
       <div
@@ -165,9 +162,12 @@ function toggleMessage(msg: { id: string; fullText?: string; text: string }): vo
           class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-700/40"
         >
           <button
-            class="w-6 h-6 rounded text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors font-mono text-sm flex items-center justify-center shrink-0"
+            class="px-2 py-0.5 rounded font-mono text-[10px] font-bold uppercase tracking-wide shrink-0 flex items-center gap-1.5 cursor-pointer transition-colors"
+            :class="agentStatus === 'working'
+              ? 'bg-green-500/80 text-white hover:bg-green-500'
+              : 'bg-gray-700/80 text-gray-400 hover:bg-gray-600/80 hover:text-white'"
             @click="minimized = true"
-          >_</button>
+          >{{ agentStatus }}<span class="text-[9px] opacity-70">^</span></button>
           <span
             class="text-gray-300 text-xs font-mono truncate flex-1"
           >{{ displayName }}<template
