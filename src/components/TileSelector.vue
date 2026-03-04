@@ -246,7 +246,7 @@ const isIOLayer = computed(
 );
 
 const isRestrictedMode = computed(
-  () => isIOLayer.value || editorStore.showCollision,
+  () => isIOLayer.value,
 );
 
 const slots = computed(() =>
@@ -604,7 +604,15 @@ const drawOverlay = () => {
   // Draw collision markers for current slot
   const colMap =
     mapStore.tileCollisionMaps[editorStore.activeSlot];
-  if (colMap && panelMode.value === 'collision') {
+  const dirColMap =
+    mapStore.tileDirCollisionMaps[editorStore.activeSlot];
+  const isColMode = panelMode.value === 'collision';
+  const isDirColMode = panelMode.value === 'dir-collision';
+
+  const drawColMarkers = (alpha: number) => {
+    if (!colMap) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
     for (const key of Object.keys(colMap)) {
       const [cx, cy] = key.split(',').map(Number);
       if (cx === undefined || cy === undefined) continue;
@@ -620,14 +628,13 @@ const drawOverlay = () => {
       ctx.lineTo(cx * sts + pad, cy * sts + sts - pad);
       ctx.stroke();
     }
-  }
+    ctx.restore();
+  };
 
-  // Draw directional collision markers for current slot
-  const dirColMap =
-    mapStore.tileDirCollisionMaps[editorStore.activeSlot];
-  if (dirColMap && panelMode.value === 'dir-collision') {
+  const drawDirColMarkers = (alpha: number) => {
+    if (!dirColMap) return;
     ctx.save();
-    ctx.globalAlpha = 0.6;
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = '#ef4444';
     const halfTile = sts / 2;
     for (const [key, mask] of Object.entries(dirColMap)) {
@@ -671,6 +678,14 @@ const drawOverlay = () => {
       }
     }
     ctx.restore();
+  };
+
+  if (isColMode) {
+    drawColMarkers(1.0);
+    drawDirColMarkers(0.25);
+  } else if (isDirColMode) {
+    drawColMarkers(0.25);
+    drawDirColMarkers(0.6);
   }
 
   // Draw interactive markers for current slot
@@ -955,7 +970,40 @@ watch(() => editorStore.selectedSelection, () => {
     container.scrollTop = cy - container.clientHeight / 2;
   });
 });
-watch(panelMode, drawOverlay);
+let syncingFromToolbar = false;
+let syncingFromPanel = false;
+
+watch(panelMode, (mode) => {
+  if (mode !== 'cursor') {
+    editorStore.selectedTile = null;
+    editorStore.selectedSelection = null;
+  }
+  if (syncingFromToolbar) { drawOverlay(); return; }
+  syncingFromPanel = true;
+  editorStore.showCollision = mode === 'collision';
+  editorStore.showDirCollision = mode === 'dir-collision';
+  syncingFromPanel = false;
+  drawOverlay();
+});
+
+watch(
+  () => [editorStore.showCollision, editorStore.showDirCollision],
+  ([col, dirCol]) => {
+    if (syncingFromPanel) return;
+    syncingFromToolbar = true;
+    if (col) {
+      panelMode.value = 'collision';
+    } else if (dirCol) {
+      panelMode.value = 'dir-collision';
+    } else if (
+      panelMode.value === 'collision'
+      || panelMode.value === 'dir-collision'
+    ) {
+      panelMode.value = 'cursor';
+    }
+    syncingFromToolbar = false;
+  },
+);
 watch(() => mapStore.tileDepthMaps, drawOverlay, { deep: true });
 watch(() => mapStore.tileCollisionMaps, drawOverlay, { deep: true });
 watch(

@@ -790,9 +790,19 @@ const render = () => {
 
   if (editorStore.showCollision) {
     drawCollisionOverlay(ctx, rawCollisionGrid, ts);
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    drawDirCollisionOverlay(
+      ctx, mapStore.getEffectiveDirCollisionGrid(), ts,
+    );
+    ctx.restore();
   }
 
   if (editorStore.showDirCollision) {
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    drawCollisionOverlay(ctx, rawCollisionGrid, ts);
+    ctx.restore();
     drawDirCollisionOverlay(
       ctx, mapStore.getEffectiveDirCollisionGrid(), ts,
     );
