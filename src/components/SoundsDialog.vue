@@ -309,12 +309,8 @@ async function deleteTrack(cat: string, filename: string) {
   const filePath = `${baseDir}/${selectedPack.value}/${cat}/${filename}`;
   try {
     await remove(filePath);
-    // Remove from tracks config
-    const key = `${cat}/${filename}`;
-    const packTracks = soundStore.config.tracks[selectedPack.value];
-    if (packTracks) {
-      delete packTracks[key];
-    }
+    // Remove from soundOverrides
+    delete soundStore.config.soundOverrides[`${selectedPack.value}/${filename}`];
     await soundStore.saveConfig();
     await soundStore.scanPacks();
   } catch (err) {

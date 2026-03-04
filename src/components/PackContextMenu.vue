@@ -79,11 +79,16 @@ async function confirmRename() {
       soundStore.config.activePacks[idx] = newName;
     }
 
-    // Move tracks config entry
-    const oldTracks = soundStore.config.tracks[props.packName];
-    if (oldTracks !== undefined) {
-      soundStore.config.tracks[newName] = oldTracks;
-      delete soundStore.config.tracks[props.packName];
+    // Move soundOverrides entries to new pack name
+    const oldPrefix = `${props.packName}/`;
+    const newPrefix = `${newName}/`;
+    for (const key of Object.keys(soundStore.config.soundOverrides)) {
+      if (key.startsWith(oldPrefix)) {
+        const filename = key.slice(oldPrefix.length);
+        soundStore.config.soundOverrides[`${newPrefix}${filename}`] =
+          soundStore.config.soundOverrides[key]!;
+        delete soundStore.config.soundOverrides[key];
+      }
     }
 
     await soundStore.saveConfig();
@@ -139,8 +144,13 @@ async function deletePack() {
       (p) => p !== props.packName,
     );
 
-    // Remove from tracks
-    delete soundStore.config.tracks[props.packName];
+    // Remove soundOverrides entries for this pack
+    const prefix = `${props.packName}/`;
+    for (const key of Object.keys(soundStore.config.soundOverrides)) {
+      if (key.startsWith(prefix)) {
+        delete soundStore.config.soundOverrides[key];
+      }
+    }
 
     await soundStore.saveConfig();
     emit('deleted', props.packName);
