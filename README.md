@@ -36,37 +36,37 @@ Agent events are persisted to IndexedDB so activity logs survive app restarts an
 
 ## Features
 
-**Multi-agent support** — Claude Code and Gemini CLI. Codex CLI support is planned once [tool hook infrastructure](https://github.com/openai/codex/discussions/2150) lands upstream.
+🤖 **Multi-agent support** — Claude Code and Gemini CLI. Codex CLI support is planned once [tool hook infrastructure](https://github.com/openai/codex/discussions/2150) lands upstream.
 
-**Live agent visualization** — NPC behavior mirrors what the agent is doing in real time: writing code sends it to a computer, reading files to the bookshelf, idle triggers wandering and conversations with nearby NPCs.
+🎮 **Live agent visualization** — NPC behavior mirrors what the agent is doing in real time: writing code sends it to a computer, reading files to the bookshelf, idle triggers wandering and conversations with nearby NPCs.
 
-**Approval alerts** — when an agent waits for user approval, the camera snaps to the NPC, a warning sign appears, and a red pulsing vignette draws your attention.
+🚨 **Approval alerts** — when an agent waits for user approval, the camera snaps to the NPC, a warning sign appears, and a red pulsing vignette draws your attention.
 
-**Subagent support** — subagents spawn as distinct NPCs with badge overlays; a line connects each subagent to its parent NPC. Transcripts are polled for live tool activity.
+👥 **Subagent support** — subagents spawn as distinct NPCs with badge overlays; a line connects each subagent to its parent NPC. Transcripts are polled for live tool activity.
 
-**Prompt display** — each NPC shows the last user prompt above its head, making it easy to tell sessions apart when running multiple agents simultaneously.
+💬 **Prompt display** — each NPC shows the last user prompt above its head, making it easy to tell sessions apart when running multiple agents simultaneously.
 
-**One-click agent setup** — a built-in setup dialog installs the hook script and merges it into each agent's settings file automatically. No manual config required.
+⚡ **One-click agent setup** — a built-in setup dialog installs the hook script and merges it into each agent's settings file automatically. No manual config required.
 
-**Tile map editor** — RPG Maker–style controls: pencil, rectangle, bucket fill, multi-tile selection. Depth layers (below / y-sorted / above), collision placement, autotiles (including wall autotiles), layers, undo/redo.
+🗺️ **Tile map editor** — RPG Maker–style controls: pencil, rectangle, bucket fill, multi-tile selection. Depth layers (below / y-sorted / above), collision placement, autotiles (including wall autotiles), layers, undo/redo.
 
-**RPG Maker asset compatible** — load standard RPG Maker XP / VX Ace / MV tilesets, autotile sheets, and character sprites directly — no conversion needed.
+🎨 **RPG Maker asset compatible** — load standard RPG Maker XP / VX Ace / MV tilesets, autotile sheets, and character sprites directly — no conversion needed.
 
-**Character editor** — configure sprite sheets per NPC: set animation regions, action regions, and a separate sprite for subagent NPCs.
+🧑‍🎨 **Character editor** — configure sprite sheets per NPC: set animation regions, action regions, and a separate sprite for subagent NPCs.
 
-**NPC world interaction** — tiles can be marked as objects (computer, plant, chair, …). NPCs pathfind to the appropriate object for each tool. On idle, NPCs wander and start conversations with each other.
+🏢 **NPC world interaction** — tiles can be marked as objects (computer, plant, chair, …). NPCs pathfind to the appropriate object for each tool. On idle, NPCs wander and start conversations with each other.
 
-**Agent doors** — NPCs enter through a configured door on spawn and exit through it when the session ends.
+🚪 **Agent doors** — NPCs enter through a configured door on spawn and exit through it when the session ends.
 
-**Shareable maps** — maps are saved as `.aito` files: all tile data, tilesets, and autotiles encoded as base64. Send one file to share a complete map.
+📦 **Shareable maps** — maps are saved as `.aito` files: all tile data, tilesets, and autotiles encoded as base64. Send one file to share a complete map.
 
-**Activity log** — floating panel showing a scrollable history of agent actions, persisted in IndexedDB across restarts.
+📋 **Activity log** — floating panel showing a scrollable history of agent actions, persisted in IndexedDB across restarts.
 
-**Compact window** — can be pinned and sized small, ideal for placing in a corner of a secondary monitor.
+🪟 **Compact window** — can be pinned and sized small, ideal for placing in a corner of a secondary monitor.
 
-**i18n** — NPC speech bubbles in English and German.
+🌍 **i18n** — NPC speech bubbles in English and German.
 
-**macOS terminal focus** — clicking an NPC raises its terminal window via the Accessibility API.
+🖥️ **macOS terminal focus** — clicking an NPC raises its terminal window via the Accessibility API.
 
 ---
 
