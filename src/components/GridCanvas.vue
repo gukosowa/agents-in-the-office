@@ -422,7 +422,10 @@ const pickTilesFromMap = (e: MouseEvent) => {
     // show the yellow selection marker in the tileset panel.
     // Set this before pickedBrush so the sync watch fires while brush is still null.
     const tilesetRect = tryExtractTilesetRect(tiles, w, h);
-    if (tilesetRect) editorStore.selectedSelection = tilesetRect;
+    if (tilesetRect) {
+      editorStore.selectedSelection = tilesetRect;
+      editorStore.selectionPulse++;
+    }
     pickedBrush.value = tiles;
     editorStore.setTool('pen');
   } else {
@@ -2197,6 +2200,7 @@ const pickTileAtCursor = (e: MouseEvent) => {
   } else if (isRegularTile(cell)) {
     editorStore.activeSlot = cell.slot;
     editorStore.setSelectedTile({ ...cell });
+    editorStore.selectionPulse++;
     editorStore.setTool('pen');
   } else {
     eraserBrushW.value = 1;

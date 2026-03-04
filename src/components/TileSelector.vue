@@ -189,6 +189,27 @@ function onTileIntCancel() {
   tileIntDialog.value.open = false;
 }
 
+// ── Selection pulse animation ────────────────────────────────
+let pulseProgress = 0; // 1.0 → 0.0 over PULSE_DURATION
+let pulseAnimId: number | null = null;
+const PULSE_DURATION = 500;
+
+function startPulse() {
+  if (pulseAnimId !== null) cancelAnimationFrame(pulseAnimId);
+  const start = performance.now();
+  function tick(now: number) {
+    pulseProgress = 1 - Math.min((now - start) / PULSE_DURATION, 1);
+    drawOverlay();
+    if (pulseProgress > 0) {
+      pulseAnimId = requestAnimationFrame(tick);
+    } else {
+      pulseAnimId = null;
+    }
+  }
+  pulseProgress = 1;
+  pulseAnimId = requestAnimationFrame(tick);
+}
+
 // ── Zoom ─────────────────────────────────────────────────────
 const zoomFit = ref(true);
 const zoomPercent = ref(100);
@@ -633,6 +654,13 @@ const drawOverlay = () => {
     ctx.strokeStyle = '#ffff00';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(ox + 0.75, oy + 0.75, ow - 1.5, oh - 1.5);
+    if (pulseProgress > 0) {
+      const expand = (1 - pulseProgress) * 4;
+      const alpha = pulseProgress * 0.9;
+      ctx.strokeStyle = `rgba(255,255,0,${alpha})`;
+      ctx.lineWidth = 2 + pulseProgress * 2;
+      ctx.strokeRect(ox - expand, oy - expand, ow + expand * 2, oh + expand * 2);
+    }
   };
   if (editorStore.selectedSelection) {
     const { x, y, w, h } = editorStore.selectedSelection;
@@ -833,6 +861,7 @@ watch(() => editorStore.tileScrollHint, (hint) => {
     }
   });
 });
+watch(() => editorStore.selectionPulse, () => { void nextTick(startPulse); });
 watch(() => editorStore.selectedSelection, () => {
   drawOverlay();
   const sel = editorStore.selectedSelection;

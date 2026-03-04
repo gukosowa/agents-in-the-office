@@ -16,6 +16,8 @@ export const useEditorStore = defineStore('editor', () => {
   const activeSlot = ref('A');
   /** One-shot hint: scroll the tile selector to this tile position. Cleared after use. */
   const tileScrollHint = ref<{ x: number; y: number } | null>(null);
+  /** Incremented each time a canvas pick yields a perfect tileset rect — triggers pulse animation. */
+  const selectionPulse = ref(0);
 
   const zoom = ref(1.0);
   const panX = ref(0);
@@ -184,6 +186,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedAutoTile,
     activeSlot,
     tileScrollHint,
+    selectionPulse,
     showCollision,
     showGrid,
     showInteractiveLayer,
