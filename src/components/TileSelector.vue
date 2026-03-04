@@ -782,7 +782,32 @@ const endSelection = () => {
 
 // ── Watchers ────────────────────────────────────────────────
 
-watch(() => editorStore.selectedTile, drawOverlay);
+function scrollTileIntoView() {
+  const container = scrollContainer.value;
+  const tile = editorStore.selectedTile;
+  if (!container || !tile) return;
+  const ts = mapStore.tileSize;
+  const scale = zoomScale.value;
+  const tileLeft = tile.x * ts * scale;
+  const tileTop = tile.y * ts * scale;
+  const tileRight = tileLeft + ts * scale;
+  const tileBottom = tileTop + ts * scale;
+  if (tileLeft < container.scrollLeft) {
+    container.scrollLeft = tileLeft;
+  } else if (tileRight > container.scrollLeft + container.clientWidth) {
+    container.scrollLeft = tileRight - container.clientWidth;
+  }
+  if (tileTop < container.scrollTop) {
+    container.scrollTop = tileTop;
+  } else if (tileBottom > container.scrollTop + container.clientHeight) {
+    container.scrollTop = tileBottom - container.clientHeight;
+  }
+}
+
+watch(() => editorStore.selectedTile, () => {
+  drawOverlay();
+  void nextTick(scrollTileIntoView);
+});
 watch(() => editorStore.selectedSelection, drawOverlay);
 watch(panelMode, drawOverlay);
 watch(() => mapStore.tileDepthMaps, drawOverlay, { deep: true });

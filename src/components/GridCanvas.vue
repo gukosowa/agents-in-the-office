@@ -379,6 +379,15 @@ const pickTilesFromMap = (e: MouseEvent) => {
     editorStore.selectedTile = null;
     editorStore.selectedAutoTile = null;
     editorStore.selectedSelection = null;
+    // Switch to the tileset slot of the first regular tile in the selection.
+    outer: for (const row of tiles) {
+      for (const cell of row) {
+        if (isRegularTile(cell)) {
+          editorStore.activeSlot = cell.slot;
+          break outer;
+        }
+      }
+    }
     pickedBrush.value = tiles;
     editorStore.setTool('pen');
   } else {
@@ -2151,6 +2160,7 @@ const pickTileAtCursor = (e: MouseEvent) => {
     );
     editorStore.setTool('pen');
   } else if (isRegularTile(cell)) {
+    editorStore.activeSlot = cell.slot;
     editorStore.setSelectedTile({ ...cell });
     editorStore.setTool('pen');
   } else {
