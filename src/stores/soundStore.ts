@@ -74,13 +74,23 @@ export interface PackInfo {
 }
 
 
+const DEFAULT_HIDDEN_EVENTS: string[] = [
+  'idle_notification',
+  'elicitation_wait',
+  'auth_success',
+  'worktree_create',
+  'worktree_remove',
+  'teammate_idle',
+  'task_completed',
+];
+
 const DEFAULT_CONFIG: SoundConfig = {
   enabled: true,
   globalVolume: 0.8,
   cooldownSeconds: 2,
   activePacks: [],
   soundOverrides: {},
-  hiddenEvents: [],
+  hiddenEvents: [...DEFAULT_HIDDEN_EVENTS],
 };
 
 function migrateTracksToSoundOverrides(
@@ -159,6 +169,10 @@ export const useSoundStore = defineStore('sound', () => {
         const { tracks: _tracks, ...rest } = parsed;
         void _tracks; // consumed by migration above, drop from config
         config.value = { ...DEFAULT_CONFIG, ...rest };
+        // Apply default hidden events for configs that predate the feature
+        if (!parsed.hiddenEvents) {
+          config.value.hiddenEvents = [...DEFAULT_HIDDEN_EVENTS];
+        }
       } catch {
         config.value = { ...DEFAULT_CONFIG, soundOverrides: {} };
       }
@@ -407,6 +421,7 @@ export const useSoundStore = defineStore('sound', () => {
 
   async function playForEvent(event: AgentEvent): Promise<void> {
     if (!config.value.enabled) return;
+    if (config.value.hiddenEvents.includes(event.type)) return;
 
     // Session pack assignment on session_start
     if (event.type === 'session_start') {

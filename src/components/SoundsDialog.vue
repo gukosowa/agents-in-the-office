@@ -23,7 +23,7 @@ import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
 import type { PackManifestSound } from '../stores/soundStore';
 import type { AgentEvent, AgentEventType } from '../drivers/types';
 import PackContextMenu from './PackContextMenu.vue';
-import { Info, X, Play, Square, TriangleAlert, Eye, EyeOff } from 'lucide-vue-next';
+import { Info, X, Play, Square, TriangleAlert, Eye, EyeOff, Trash2 } from 'lucide-vue-next';
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -356,6 +356,33 @@ function toggleInfoPopover(eventType: string) {
 
 // ---- Event visibility ----
 const showVisibilityDialog = ref(false);
+const confirmDeletePack = ref<string | null>(null);
+
+async function deleteSelectedPack(): Promise<void> {
+  const packName = confirmDeletePack.value;
+  confirmDeletePack.value = null;
+  if (!packName) return;
+  const baseDir = soundStore.getSoundPacksDir();
+  try {
+    await remove(`${baseDir}/${packName}`, { recursive: true });
+    soundStore.config.activePacks = soundStore.config.activePacks.filter(
+      (p) => p !== packName,
+    );
+    const prefix = `${packName}/`;
+    for (const key of Object.keys(soundStore.config.soundOverrides)) {
+      if (key.startsWith(prefix)) {
+        delete soundStore.config.soundOverrides[key];
+      }
+    }
+    await soundStore.saveConfig();
+    await soundStore.scanPacks();
+    if (selectedPack.value === packName) {
+      selectedPack.value = soundStore.packs[0]?.name ?? null;
+    }
+  } catch (err) {
+    console.error('[SoundsDialog] delete pack failed', err);
+  }
+}
 
 const visibleEventTypes = computed(() =>
   AGENT_EVENT_TYPES.filter(
@@ -485,6 +512,13 @@ async function clearAssignments(eventType: AgentEventType): Promise<void> {
   manifest.assignments = manifest.assignments.filter(
     (a) => a.event !== eventType,
   );
+  await soundStore.savePackManifest(selectedPack.value, manifest);
+}
+
+async function clearAllAssignments(): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  const manifest = selectedPackInfo.value.manifest;
+  manifest.assignments = [];
   await soundStore.savePackManifest(selectedPack.value, manifest);
 }
 
@@ -1000,6 +1034,12 @@ watch(selectedPack, async (packName) => {
               >
                 Import
               </button>
+              <button
+                v-if="selectedPack"
+                class="px-2 py-1 bg-gray-700/60 rounded hover:bg-red-900/60 text-gray-400 hover:text-red-400"
+                title="Delete pack"
+                @click="confirmDeletePack = selectedPack"
+              ><Trash2 :size="14" /></button>
             </div>
           </div>
 
@@ -1050,6 +1090,7 @@ watch(selectedPack, async (packName) => {
                     draggingSoundFile === sound.file ? 'opacity-50' : '',
                     dragOverSoundFile === sound.file ? 'bg-indigo-500/20' : '',
                     draggingChip ? 'opacity-100' : '',
+                    hoveredSoundFile === sound.file ? 'bg-gray-800/60' : '',
                   ]"
                   @mouseenter="hoveredSoundFile = sound.file"
                   @mouseleave="hoveredSoundFile = null"
@@ -1113,6 +1154,11 @@ watch(selectedPack, async (packName) => {
               <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-700 shrink-0">
                 <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Events</span>
                 <button
+                  class="text-gray-500 hover:text-red-400"
+                  title="Clear all assignments"
+                  @click="clearAllAssignments"
+                ><Trash2 :size="14" /></button>
+                <button
                   class="text-gray-400 hover:text-gray-200"
                   title="Toggle event visibility"
                   @click="showVisibilityDialog = true"
@@ -1129,6 +1175,7 @@ watch(selectedPack, async (packName) => {
                     flashingEvent === eventType ? 'bg-indigo-600/30' : '',
                     dragOverEventType === eventType ? 'bg-indigo-500/20 opacity-100' : '',
                     draggingSoundFile ? 'opacity-100' : '',
+                    hoveredSoundFile && assignmentsForEvent(eventType).includes(hoveredSoundFile) ? 'opacity-100 bg-gray-800/40' : '',
                   ]"
                 >
                   <div class="flex items-center gap-2">
@@ -1169,8 +1216,13 @@ watch(selectedPack, async (packName) => {
                       v-for="file in assignmentsForEvent(eventType)"
                       :key="file"
                       class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700/80 rounded text-xs text-gray-200 cursor-grab select-none hover:bg-gray-600/80"
-                      :class="draggingChip?.file === file && draggingChip?.event === eventType ? 'opacity-50' : ''"
+                      :class="[
+                        draggingChip?.file === file && draggingChip?.event === eventType ? 'opacity-50' : '',
+                        hoveredSoundFile === file ? 'bg-indigo-500/25' : '',
+                      ]"
                       :title="file"
+                      @mouseenter="hoveredSoundFile = file"
+                      @mouseleave="hoveredSoundFile = null"
                       @click="playPreview(file)"
                       @pointerdown="startChipDrag($event, file, eventType)"
                     >
@@ -1213,6 +1265,28 @@ watch(selectedPack, async (packName) => {
       @deleted="onPackDeleted"
       @migrated="onPackMigrated"
     />
+
+    <!-- Delete confirm dialog -->
+    <div
+      v-if="confirmDeletePack"
+      class="fixed inset-0 z-[210] flex items-center justify-center bg-black/50"
+      @click.self="confirmDeletePack = null"
+    >
+      <div class="w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-2xl p-4">
+        <p class="text-sm text-gray-200 mb-1">Delete pack?</p>
+        <p class="text-xs text-gray-400 mb-4 font-mono truncate">{{ confirmDeletePack }}</p>
+        <div class="flex justify-end gap-2">
+          <button
+            class="px-3 py-1 rounded text-xs text-gray-300 bg-gray-700 hover:bg-gray-600"
+            @click="confirmDeletePack = null"
+          >Cancel</button>
+          <button
+            class="px-3 py-1 rounded text-xs text-red-200 bg-red-800 hover:bg-red-700"
+            @click="deleteSelectedPack"
+          >Delete</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Event visibility dialog -->
     <div
