@@ -1,41 +1,57 @@
 ## Codebase Patterns
-- soundStore uses Pinia with `defineStore('sound', () => {...})` composition API pattern
-- Tauri FS: use `exists()`, `readTextFile()`, `writeTextFile()`, `readDir()`, `readFile()` from `@tauri-apps/plugin-fs`
-- Return object from store must explicitly list all functions to export them (no auto-export)
-- `bun run build` runs `vue-tsc -b && vite build` — use this to verify types
-- SoundsDialog is in `src/components/SoundsDialog.vue`, soundStore in `src/stores/soundStore.ts`
-- AgentEventType is a union type in `src/drivers/types.ts` — 16 values
-- `soundOverrides` uses flat key `"packName/filename"` — NOT nested by pack like the old `tracks` field
-- When renaming a pack, iterate `soundOverrides` keys to move `oldName/file` → `newName/file`; when deleting, filter by `startsWith("packName/")`
-- Vue components directly mutate `soundStore.config.*` reactively — grep all components when changing a config field
-- TypeScript `@deprecated` JSDoc generates `ts(6385)` warnings — use plain comments to avoid zero-warnings policy violations
+- `soundStore.ts` is in `src/stores/` and uses Pinia defineStore with composition API style
+- `PackInfo` has both legacy `categories: Record<string, string[]>` (folder-based) and `manifest: PackManifest` (new)
+- Two-layer volume/enabled resolution: `effectiveVolume(packName, filename, manifestSound?)` and `isEnabled(packName, filename, manifestSound?)` — both are already in soundStore
+- Files in new manifest-based packs live at pack root (`soundPacksDir/packName/filename`), not in category subdirectories
+- `exists` from `@tauri-apps/plugin-fs` is already imported in soundStore for file existence checks
+- Type check via `bun run build` (runs `vue-tsc -b && vite build`)
 
 ---
 
-## 2026-03-04 - US-002
-- What was implemented:
-  - Added `soundOverrides: Record<string, { volume: number; enabled: boolean }>` to `SoundConfig` (key: `packName/filename`)
-  - Made `tracks` optional in `SoundConfig` for backward-compat read; dropped from saves
-  - Added `migrateTracksToSoundOverrides()`: converts `tracks[packName]["category/filename"]` → `soundOverrides["packName/filename"]`
-  - Updated `init()` to migrate on load, then exclude `tracks` from in-memory config
-  - Rewrote `getTrackConfig`/`setTrackConfig` to read/write `soundOverrides` (still accept legacy `category/filename` arg)
-  - Added `effectiveVolume(packName, filename, manifestSound?)` and `isEnabled(packName, filename, manifestSound?)` two-layer helpers
-  - Updated `PackContextMenu.vue`: rename migrates `soundOverrides` keys; delete removes all matching keys
-  - Updated `SoundsDialog.vue`: delete track removes `soundOverrides[packName/filename]`
-- Files changed:
-  - `src/stores/soundStore.ts`
-  - `src/components/PackContextMenu.vue`
-  - `src/components/SoundsDialog.vue`
+## 2026-03-04 - US-003
+- Updated `playForEvent` to use manifest-based lookup instead of folder-based categories
+- Now reads `packInfo.manifest.assignments.filter(a => a.event === event.type)` to get assigned files
+- Builds `manifestSoundMap` from `packInfo.manifest.sounds` for volume/enabled defaults
+- Filters enabled files using `isEnabled(packName, filename, manifestSoundMap.get(filename))`
+- Resolves volume using `effectiveVolume(packName, chosenFile, manifestSound)`
+- File path changed from `soundPacksDir/packName/category/file` to `soundPacksDir/packName/file`
+- Added `exists()` check before loading — skips with `console.warn` if file not on disk
+- **Files changed:** `src/stores/soundStore.ts`
 - **Learnings for future iterations:**
-  - The old `tracks` field was nested `tracks[packName][categoryAndFile]`; new `soundOverrides` is flat `soundOverrides["packName/filename"]`
-  - Multiple Vue components accessed `soundStore.config.tracks` directly — always grep for usages across all `.vue` files when changing a config field
+  - The old `categories` field on PackInfo is still populated by scanPacks but is no longer used in playback — it remains for legacy/UI purposes
+  - Session pack assignment on `session_start` is still inline in `playForEvent` (separate from `assignSessionPack` which handles preferred packs from Character)
+  - `getTrackConfig` / `setTrackConfig` still exist for backward compat but playForEvent no longer uses them
 ---
 
-## 2026-03-04 - US-001
-- What was implemented: Added `PackManifest` interface (sounds[], assignments[]), `PackManifestSound`, `PackManifestAssignment` interfaces. Updated `PackInfo` to include `manifest: PackManifest` and `hasManifest: boolean`. Added `loadPackManifest(packName)` and `savePackManifest(packName, manifest)` functions. Updated `scanPacks()` to read manifest.json per pack.
-- Files changed: `src/stores/soundStore.ts`
+## 2026-03-04 - US-004
+- Replaced old category accordion panel with two-column patchbay layout (Sounds + Events)
+- Left column shows "Sounds" header with empty body (US-005 will populate)
+- Right column shows all 16 AgentEventType rows; dimmed (`opacity-40`) when no assignments, full opacity when assigned
+- Removed dead code: `sortedCategories`, `categoryAllEnabled`, `toggleCategoryEnabled`, `toggleCategory`, `expandedCategories`, `addFilesToCategory`, `deleteTrack`, `getFilePath`, `AudioPlayer` import
+- Kept `remove` and `copyFile` imports removed (will be re-added in US-005/US-009)
+- `hasAssignments(eventType)` reads from `selectedPackInfo.manifest.assignments`
+- Info popovers migrated from category-based to event-type-based (same pattern)
+- **Files changed:** `src/components/SoundsDialog.vue`
 - **Learnings for future iterations:**
-  - The existing scanPacks() scans subdirectories as "categories" (old format). New manifest format is flat — files in pack root + manifest.json. Both coexist.
-  - `hasManifest` boolean on PackInfo distinguishes old-style packs from new manifest packs (needed for US-012 migration indicator)
-  - TypeScript strict mode: functions declared inside store closure but not returned cause "declared but value never read" errors — always add to return object
+  - The prd.json lives in the main repo dir (`/agents-in-the-office/.chief/prds/`), NOT in the worktree — edit it there
+  - `rightPanel` ref now wraps the entire two-column area (the `flex flex-1 min-h-0 overflow-hidden` div) — scroll reset via `rightPanel.scrollTop = 0` is preserved
+  - The `confirmCreatePack` still creates old-style event subdirectories — US-010 will fix this to use manifest
+---
+
+## 2026-03-04 - US-005
+- Implemented left column sound file list with inline preview
+- Each sound row: play button (▶), filename, broken-link indicator (⚠ in red), volume slider (on hover), enabled toggle (checkbox), stop button (■ active when playing)
+- `playPreview(filename)` uses soundStore.loadBuffer + getOrCreateAudioContext, stops any current source first (restarts from start)
+- `stopPreview()` stops the AudioBufferSourceNode safely (try/catch for already-stopped)
+- `checkSoundFileExistence(packName)` async parallel check using `exists()` from plugin-fs, results in `soundFileExists` Map
+- `updateSoundVolume/updateSoundEnabled` mutate the manifest.sounds entry in place (reactive through Pinia ref), then call `savePackManifest`
+- Hover state tracked with `hoveredSoundFile` ref; volume slider uses `v-show` for visibility
+- `watch(selectedPack)` extended: stops preview, clears existence map, triggers new existence check, resets scroll
+- **Files changed:** `src/components/SoundsDialog.vue`
+- **Learnings for future iterations:**
+  - `AudioBufferSourceNode.stop()` can throw if already stopped — always wrap in try/catch
+  - `soundFileExists.value` must be a `ref<Map<...>>` not a reactive Map for `v-if="soundFileExists.get(x) === false"` to be reactive
+  - Mutating nested objects inside `packs.value[i].manifest.sounds[j]` IS reactive (Pinia wraps deeply)
+  - `exists` must be imported from `@tauri-apps/plugin-fs` (already available in soundStore)
+  - prd.json may have extra fields like `"inProgress": true` — clean them up when setting passes: true
 ---

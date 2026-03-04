@@ -1087,12 +1087,13 @@ const render = () => {
             renderables.push({
               y: sortY,
               draw: (c) => {
-                c.drawImage(
-                  img, cell.x * ts, cell.y * ts,
-                  ts, ts,
+                drawTileTransformed(
+                  c, img,
+                  cell.x * ts, cell.y * ts, ts, ts,
                   snap(tileX * ts), snap(tileY * ts),
                   snapSz(tileX * ts, (tileX + 1) * ts),
                   snapSz(tileY * ts, (tileY + 1) * ts),
+                  cell.flipX ?? false, cell.flipY ?? false, cell.rotation ?? 0,
                 );
               },
             });
@@ -1344,6 +1345,26 @@ const drawAutoTileCell = (
   }
 };
 
+const drawTileTransformed = (
+  c: CanvasRenderingContext2D,
+  img: HTMLImageElement | HTMLCanvasElement,
+  srcX: number, srcY: number, srcW: number, srcH: number,
+  dx: number, dy: number, dw: number, dh: number,
+  flipX: boolean, flipY: boolean, rotation: 0 | 90 | 180 | 270,
+) => {
+  if (!flipX && !flipY && rotation === 0) {
+    c.drawImage(img, srcX, srcY, srcW, srcH, dx, dy, dw, dh);
+    return;
+  }
+  c.save();
+  c.translate(dx + dw / 2, dy + dh / 2);
+  if (rotation !== 0) c.rotate((rotation * Math.PI) / 180);
+  if (flipX) c.scale(-1, 1);
+  if (flipY) c.scale(1, -1);
+  c.drawImage(img, srcX, srcY, srcW, srcH, -dw / 2, -dh / 2, dw, dh);
+  c.restore();
+};
+
 const drawLayer = (ctx: CanvasRenderingContext2D, layerIndex: number) => {
   const layer = mapStore.layers[layerIndex];
   if (!layer) return;
@@ -1362,11 +1383,13 @@ const drawLayer = (ctx: CanvasRenderingContext2D, layerIndex: number) => {
       if (isRegularTile(cell)) {
         const img = mapStore.getSlotImage(cell.slot);
         if (img) {
-          ctx.drawImage(
-            img, cell.x * ts, cell.y * ts, ts, ts,
+          drawTileTransformed(
+            ctx, img,
+            cell.x * ts, cell.y * ts, ts, ts,
             snap(x * ts), snap(y * ts),
             snapSz(x * ts, (x + 1) * ts),
             snapSz(y * ts, (y + 1) * ts),
+            cell.flipX ?? false, cell.flipY ?? false, cell.rotation ?? 0,
           );
         }
       } else if (isAutoTile(cell)) {

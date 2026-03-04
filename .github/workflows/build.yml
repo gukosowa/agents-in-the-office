@@ -56,6 +56,17 @@ jobs:
 
       - run: bun install
 
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Update tauri.conf.json
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > /tmp/tauri.conf.json && \
+            mv /tmp/tauri.conf.json src-tauri/tauri.conf.json
+          # Update Cargo.toml (first [package] version field)
+          sed -i "0,/^version = .*/s/^version = .*/version = \"$VERSION\"/" src-tauri/Cargo.toml
+
       # Only set APPLE_SIGNING_IDENTITY when the secret is configured — setting it
       # to an empty string causes codesign to fail rather than skip signing.
       # To enable macOS code signing and notarization, add repository secrets:
