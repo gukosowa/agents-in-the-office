@@ -379,20 +379,36 @@ watch(selectedPack, async () => {
                 <span class="text-sm text-gray-200 truncate flex-1">{{ pack.name }}</span>
               </div>
             </div>
-            <!-- Buttons -->
-            <div class="flex gap-1 p-2 border-t border-gray-700">
-              <button
-                class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
-                @click="createNewPack"
-              >
-                New Pack
-              </button>
-              <button
-                class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
-                @click="openImportPicker"
-              >
-                Import
-              </button>
+            <!-- Buttons / new pack input -->
+            <div class="flex flex-col gap-1 p-2 border-t border-gray-700">
+              <div v-if="creatingPack" class="flex gap-1">
+                <input
+                  ref="newPackInput"
+                  v-model="newPackName"
+                  class="flex-1 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-gray-200 outline-none focus:border-indigo-400"
+                  placeholder="Pack name…"
+                  @keydown.enter="confirmCreatePack"
+                  @keydown.escape="cancelCreatePack"
+                />
+                <button
+                  class="px-2 py-1 bg-indigo-600/80 rounded hover:bg-indigo-500 text-xs text-white"
+                  @click="confirmCreatePack"
+                >OK</button>
+              </div>
+              <div class="flex gap-1">
+                <button
+                  class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                  @click="startCreatePack"
+                >
+                  New Pack
+                </button>
+                <button
+                  class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                  @click="openImportPicker"
+                >
+                  Import
+                </button>
+              </div>
             </div>
           </div>
 
