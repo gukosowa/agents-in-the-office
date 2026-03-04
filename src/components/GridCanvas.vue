@@ -61,6 +61,8 @@ let animationId: number;
 let isPanning = false;
 let lastPanX = 0;
 let lastPanY = 0;
+let lastMouseX = 0;
+let lastMouseY = 0;
 
 // Keyboard modifier state for trackpad workflows
 let isSpaceHeld = false;
@@ -720,8 +722,13 @@ const render = () => {
     previewRenderables.sort((a, b) => a.y - b.y);
     for (const r of previewRenderables) r.draw(ctx);
   } else {
+    // Pass 1: wall autotiles from all layers first (always render behind)
     for (let i = 0; i < rawLayers.length; i++) {
-      drawLayer(ctx, i, rawLayers, rawLayerMeta, rawAutoTilePool, ts);
+      drawLayer(ctx, i, rawLayers, rawLayerMeta, rawAutoTilePool, ts, 'walls');
+    }
+    // Pass 2: everything else in layer order
+    for (let i = 0; i < rawLayers.length; i++) {
+      drawLayer(ctx, i, rawLayers, rawLayerMeta, rawAutoTilePool, ts, 'no-walls');
     }
   }
   if (editorStore.showInteractiveLayer) {
@@ -1320,6 +1327,8 @@ const effectiveDims = (
     : { ew: w, eh: h };
 };
 
+type DrawPass = 'all' | 'walls' | 'no-walls';
+
 const drawLayerContent = (
   ctx: CanvasRenderingContext2D,
   layerIndex: number,
@@ -1327,6 +1336,7 @@ const drawLayerContent = (
   rawAutoTilePool: AutoTileSlot[],
   ts: number,
   zoom = 1,
+  pass: DrawPass = 'all',
 ) => {
   const snap = (n: number) => Math.round(n * zoom) / zoom;
   const snapSz = (a: number, b: number) =>
@@ -1338,6 +1348,7 @@ const drawLayerContent = (
       const cell = row[x];
       if (!cell) continue;
       if (isRegularTile(cell)) {
+        if (pass === 'walls') continue;
         const img = mapStore.getSlotImage(cell.slot);
         if (img) {
           const dx = snap(x * ts);
@@ -1354,10 +1365,13 @@ const drawLayerContent = (
       } else if (isAutoTile(cell)) {
         const atSlot = rawAutoTilePool[cell.autoTileIndex];
         if (!atSlot?.image) continue;
+        const isWall = atSlot.type === 'C';
+        if (pass === 'walls' && !isWall) continue;
+        if (pass === 'no-walls' && isWall) continue;
         const variant = mapStore.getAutoTileVariant(
           layerIndex, x, y, cell.autoTileIndex, layer,
         );
-        const wv = atSlot.type === 'C'
+        const wv = isWall
           ? mapStore.getWallVariant(
             layerIndex, x, y, cell.autoTileIndex, layer,
           )
@@ -1435,7 +1449,7 @@ const collectPreviewRenderables = (
           ? mapStore.getWallVariant(layerIndex, tileX, tileY, cell.autoTileIndex, layer)
           : undefined;
         let sortY: number;
-        if (atDepth === -1) {
+        if (atDepth === -1 || (atDepth === 0 && atType === 'C')) {
           sortY = -1;
         } else if (atDepth === 2) {
           sortY = mh * ts + ts + 1;
@@ -1470,6 +1484,7 @@ const drawLayer = (
   rawLayerMeta: LayerMeta[],
   rawAutoTilePool: AutoTileSlot[],
   ts: number,
+  pass: DrawPass = 'all',
 ) => {
   const meta = rawLayerMeta[layerIndex];
   if (meta && !meta.visible) return;
@@ -1486,7 +1501,7 @@ const drawLayer = (
     ctx.globalAlpha = 1.0;
     ctx.filter = 'none';
     drawLayerContent(
-      ctx, layerIndex, layer, rawAutoTilePool, ts, editorStore.zoom,
+      ctx, layerIndex, layer, rawAutoTilePool, ts, editorStore.zoom, pass,
     );
     ctx.restore();
     return;
@@ -1506,7 +1521,7 @@ const drawLayer = (
 
   drawLayerContent(
     offCtx as unknown as CanvasRenderingContext2D,
-    layerIndex, layer, rawAutoTilePool, ts,
+    layerIndex, layer, rawAutoTilePool, ts, 1, pass,
   );
 
   ctx.save();
@@ -1889,6 +1904,8 @@ const handlePointerDown = (e: PointerEvent) => {
 };
 
 const handlePointerMove = (e: PointerEvent) => {
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
   if (isPanning) {
     const dx = e.clientX - lastPanX;
     const dy = e.clientY - lastPanY;
@@ -2292,6 +2309,9 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
   if (e.key === ' ') {
     isSpaceHeld = true;
+    isPanning = true;
+    lastPanX = lastMouseX;
+    lastPanY = lastMouseY;
     e.preventDefault();
     return;
   }
@@ -2342,12 +2362,33 @@ const handleKeyDown = (e: KeyboardEvent) => {
           editorStore.setTool('pen');
         }
         return;
-      case 'x':
+      case 't':
         editorStore.showCollision = !editorStore.showCollision;
         if (editorStore.showCollision) {
           editorStore.clearMultiSelections();
         }
         return;
+      case 'x': {
+        const loadedAT = mapStore.autoTilePool
+          .map((slot, i) => ({ slot, i }))
+          .filter(({ slot }) => slot.image !== null);
+        if (loadedAT.length === 0) return;
+        const curIdx = editorStore.selectedAutoTile?.autoTileIndex ?? -1;
+        const pos = loadedAT.findIndex(({ i }) => i === curIdx);
+        const next = loadedAT[(pos + 1) % loadedAT.length]!;
+        editorStore.setSelectedAutoTile({ autoTileIndex: next.i });
+        return;
+      }
+      case 'y': {
+        const loadedSlots = Object.keys(mapStore.tilesetPool)
+          .sort()
+          .filter((k) => mapStore.tilesetPool[k]?.image !== null);
+        if (loadedSlots.length === 0) return;
+        const cur = loadedSlots.indexOf(editorStore.activeSlot);
+        const next = loadedSlots[(cur + 1) % loadedSlots.length]!;
+        editorStore.activeSlot = next;
+        return;
+      }
       case 'g':
         editorStore.showGrid = !editorStore.showGrid;
         return;

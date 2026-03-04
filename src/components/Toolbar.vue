@@ -5,7 +5,7 @@ import { useEditorStore } from '../stores/editorStore';
 import { useUndoStore } from '../stores/undoStore';
 import {
   Save, HardDriveDownload, FolderOpen,
-  FilePlus2, Grid3x3, Undo2, Redo2,
+  FilePlus2, Grid3x3, Undo2, Redo2, Keyboard,
 } from 'lucide-vue-next';
 
 const editorStore = useEditorStore();
@@ -95,6 +95,51 @@ watch(showConfirm, (open) => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize);
 });
+
+const showShortcuts = ref(false);
+
+const toolShortcuts = [
+  { key: 'Q', label: 'Pen' },
+  { key: 'W', label: 'Eraser' },
+  { key: 'E', label: 'Fill' },
+  { key: 'C', label: 'Pick tile (eyedropper)' },
+  { key: 'M', label: 'Move selection' },
+  { key: 'Space (hold)', label: 'Pan canvas' },
+];
+
+const modeShortcuts = [
+  { key: 'A', label: 'Toggle rectangle mode' },
+  { key: 'S', label: 'Toggle line mode' },
+];
+
+const transformShortcuts = [
+  { key: 'F', label: 'Flip horizontal' },
+  { key: 'V', label: 'Flip vertical' },
+  { key: 'R', label: 'Rotate 90° CW' },
+];
+
+const viewShortcuts = [
+  { key: 'G', label: 'Toggle grid' },
+  { key: 'T', label: 'Toggle collision overlay' },
+  { key: 'X', label: 'Cycle to next autotile' },
+  { key: 'Y', label: 'Cycle to next tileset' },
+];
+
+const selectionShortcuts = [
+  { key: 'Esc', label: 'Deselect / clear selection' },
+  { key: 'Del / ⌫', label: 'Delete selected tiles' },
+  { key: '⌘C', label: 'Copy selection' },
+  { key: '⌘V', label: 'Paste' },
+];
+
+const fileShortcuts = [
+  { key: '⌘N', label: 'New map' },
+  { key: '⌘S', label: 'Save' },
+  { key: '⌘⇧S', label: 'Save as' },
+  { key: '⌘O', label: 'Open file' },
+  { key: '⌘Z', label: 'Undo' },
+  { key: '⌘⇧Z', label: 'Redo' },
+];
 </script>
 
 <template>
@@ -210,7 +255,120 @@ onBeforeUnmount(() => {
         <Grid3x3 :size="14" />
       </button>
     </div>
+
+    <div class="border-l border-gray-600 mx-1 h-5" />
+
+    <button
+      title="Keyboard Shortcuts"
+      class="flex items-center gap-1.5 px-2 py-1 rounded text-xs
+             bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+      @click="showShortcuts = true"
+    >
+      <Keyboard :size="14" />
+      Shortcuts
+    </button>
   </div>
+
+  <!-- Shortcuts dialog -->
+  <Teleport to="body">
+    <div
+      v-if="showShortcuts"
+      class="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center"
+      @mousedown.self="showShortcuts = false"
+    >
+      <div
+        class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl
+               w-[560px] max-h-[80vh] overflow-y-auto"
+      >
+        <div class="flex items-center justify-between px-5 py-3.5
+                    border-b border-gray-700 sticky top-0 bg-gray-900">
+          <span class="text-sm font-semibold text-white flex items-center gap-2">
+            <Keyboard :size="16" />
+            Keyboard Shortcuts
+          </span>
+          <button
+            class="text-gray-400 hover:text-white transition-colors"
+            @click="showShortcuts = false"
+          >✕</button>
+        </div>
+        <div class="p-5 grid grid-cols-2 gap-x-6 gap-y-5">
+
+          <section>
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Tools
+            </h3>
+            <ul class="space-y-1.5">
+              <li v-for="row in toolShortcuts" :key="row.key" class="flex justify-between text-sm">
+                <span class="text-gray-300">{{ row.label }}</span>
+                <kbd class="shortcut-key">{{ row.key }}</kbd>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Draw Modes
+            </h3>
+            <ul class="space-y-1.5">
+              <li v-for="row in modeShortcuts" :key="row.key" class="flex justify-between text-sm">
+                <span class="text-gray-300">{{ row.label }}</span>
+                <kbd class="shortcut-key">{{ row.key }}</kbd>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Tile Transforms
+            </h3>
+            <ul class="space-y-1.5">
+              <li v-for="row in transformShortcuts" :key="row.key" class="flex justify-between text-sm">
+                <span class="text-gray-300">{{ row.label }}</span>
+                <kbd class="shortcut-key">{{ row.key }}</kbd>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              View
+            </h3>
+            <ul class="space-y-1.5">
+              <li v-for="row in viewShortcuts" :key="row.key" class="flex justify-between text-sm">
+                <span class="text-gray-300">{{ row.label }}</span>
+                <kbd class="shortcut-key">{{ row.key }}</kbd>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              Selection
+            </h3>
+            <ul class="space-y-1.5">
+              <li v-for="row in selectionShortcuts" :key="row.key" class="flex justify-between text-sm">
+                <span class="text-gray-300">{{ row.label }}</span>
+                <kbd class="shortcut-key">{{ row.key }}</kbd>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              File &amp; History
+            </h3>
+            <ul class="space-y-1.5">
+              <li v-for="row in fileShortcuts" :key="row.key" class="flex justify-between text-sm">
+                <span class="text-gray-300">{{ row.label }}</span>
+                <kbd class="shortcut-key">{{ row.key }}</kbd>
+              </li>
+            </ul>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- New-map confirm popover -->
   <Teleport to="body">
@@ -253,6 +411,20 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #374151;
+  border: 1px solid #4b5563;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #d1d5db;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .pop-down-enter-active,
 .pop-down-leave-active,
 .pop-up-enter-active,

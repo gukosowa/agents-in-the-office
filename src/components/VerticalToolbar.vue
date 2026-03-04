@@ -82,8 +82,8 @@ const lineApplicable = computed(
     <button
       :title="
         editorStore.showCollision
-          ? 'Hide Collision (X)'
-          : 'Show Collision (X)'
+          ? 'Hide Collision (T)'
+          : 'Show Collision (T)'
       "
       :class="
         editorStore.showCollision
@@ -98,7 +98,7 @@ const lineApplicable = computed(
       "
     >
       <Ban :size="18" />
-      <span class="shortcut-badge">X</span>
+      <span class="shortcut-badge">T</span>
     </button>
 
     <div class="border-t border-gray-600 w-5 my-0.5" />

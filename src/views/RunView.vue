@@ -1096,7 +1096,7 @@ const render = () => {
               : undefined;
             const mh = mapStore.height;
             let sortY: number;
-            if (atDepth === -1) {
+            if (atDepth === -1 || (atDepth === 0 && atType === 'C')) {
               sortY = -1;
             } else if (atDepth === 2) {
               sortY = mh * ts + ts + 1;
