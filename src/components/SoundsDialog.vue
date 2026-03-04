@@ -9,14 +9,12 @@ import {
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   mkdir,
-  remove,
-  copyFile,
   readFile,
   writeFile,
 } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
-import AudioPlayer from './AudioPlayer.vue';
+import type { AgentEventType } from '../drivers/types';
 import PackContextMenu from './PackContextMenu.vue';
 
 const emit = defineEmits<{ close: [] }>();
@@ -39,7 +37,6 @@ const cooldown = computed({
 
 // ---- Pack list ----
 const selectedPack = ref<string | null>(null);
-const expandedCategories = ref(new Set<string>());
 const rightPanel = ref<HTMLElement | null>(null);
 
 onMounted(async () => {
@@ -69,7 +66,6 @@ function togglePackActive(packName: string, active: boolean) {
 
 function selectPack(name: string) {
   selectedPack.value = name;
-  expandedCategories.value = new Set();
   void nextTick(() => {
     if (rightPanel.value) rightPanel.value.scrollTop = 0;
   });
@@ -231,104 +227,27 @@ const EVENT_DESCRIPTIONS: Record<string, string> = {
 
 const activeInfoPopover = ref<string | null>(null);
 
-function toggleInfoPopover(cat: string) {
-  activeInfoPopover.value = activeInfoPopover.value === cat ? null : cat;
+function toggleInfoPopover(eventType: string) {
+  activeInfoPopover.value = activeInfoPopover.value === eventType ? null : eventType;
 }
 
-// ---- Right panel: categories ----
+// ---- Patchbay data ----
 const selectedPackInfo = computed(() =>
   soundStore.packs.find((p) => p.name === selectedPack.value) ?? null,
 );
 
-const sortedCategories = computed(() => {
-  const info = selectedPackInfo.value;
-  if (!info) return [];
-  const withFiles = AGENT_EVENT_TYPES.filter(
-    (cat) => (info.categories[cat]?.length ?? 0) > 0,
-  );
-  const empty = AGENT_EVENT_TYPES.filter(
-    (cat) => (info.categories[cat]?.length ?? 0) === 0,
-  );
-  return [...withFiles, ...empty];
-});
-
-function categoryAllEnabled(cat: string): boolean {
-  const files = selectedPackInfo.value?.categories[cat] ?? [];
-  if (files.length === 0) return false;
-  return files.every((filename) => {
-    const key = `${cat}/${filename}`;
-    return soundStore.getTrackConfig(selectedPack.value!, key).enabled;
-  });
+function hasAssignments(eventType: AgentEventType): boolean {
+  if (!selectedPackInfo.value) return false;
+  return selectedPackInfo.value.manifest.assignments.some((a) => a.event === eventType);
 }
 
-function toggleCategoryEnabled(cat: string, val: boolean) {
-  const files = selectedPackInfo.value?.categories[cat] ?? [];
-  if (!selectedPack.value) return;
-  for (const filename of files) {
-    const key = `${cat}/${filename}`;
-    const cfg = soundStore.getTrackConfig(selectedPack.value, key);
-    soundStore.setTrackConfig(selectedPack.value, key, { ...cfg, enabled: val });
-  }
-  void soundStore.saveConfig();
-}
-
-function toggleCategory(cat: string) {
-  if (expandedCategories.value.has(cat)) {
-    expandedCategories.value.delete(cat);
-  } else {
-    expandedCategories.value.add(cat);
-  }
-}
-
-async function addFilesToCategory(cat: string) {
-  if (!selectedPack.value) return;
-  const result = await open({
-    filters: [
-      { name: 'Audio', extensions: ['mp3', 'ogg', 'wav', 'flac', 'm4a', 'webm'] },
-    ],
-    multiple: true,
-  });
-  if (!result) return;
-  const files = Array.isArray(result) ? result : [result];
-  const baseDir = soundStore.getSoundPacksDir();
-  const catPath = `${baseDir}/${selectedPack.value}/${cat}`;
-  await mkdir(catPath, { recursive: true });
-
-  for (const src of files) {
-    const filename = (src as string).split('/').pop();
-    if (!filename) continue;
-    await copyFile(src as string, `${catPath}/${filename}`);
-  }
-
-  await soundStore.scanPacks();
-}
-
-async function deleteTrack(cat: string, filename: string) {
-  if (!selectedPack.value) return;
-  const baseDir = soundStore.getSoundPacksDir();
-  const filePath = `${baseDir}/${selectedPack.value}/${cat}/${filename}`;
-  try {
-    await remove(filePath);
-    // Remove from soundOverrides
-    delete soundStore.config.soundOverrides[`${selectedPack.value}/${filename}`];
-    await soundStore.saveConfig();
-    await soundStore.scanPacks();
-  } catch (err) {
-    console.error('[SoundsDialog] deleteTrack failed', err);
-  }
-}
-
-function getFilePath(cat: string, filename: string): string {
-  return `${soundStore.getSoundPacksDir()}/${selectedPack.value}/${cat}/${filename}`;
-}
-
-// Re-scan on selectedPack change (to keep categories fresh)
+// Reset scroll on pack change
 watch(selectedPack, async () => {
-  expandedCategories.value = new Set();
   await nextTick(() => {
     if (rightPanel.value) rightPanel.value.scrollTop = 0;
   });
 });
+
 </script>
 
 <template>
@@ -454,89 +373,60 @@ watch(selectedPack, async () => {
             </div>
           </div>
 
-          <!-- Right panel: categories -->
-          <div ref="rightPanel" class="flex-1 overflow-y-auto min-w-0">
-            <template v-if="selectedPackInfo">
-              <div
-                v-for="cat in sortedCategories"
-                :key="cat"
-                class="border-b border-gray-800"
-              >
-                <!-- Category header -->
+          <!-- Patchbay: Sounds + Events columns -->
+          <div ref="rightPanel" class="flex flex-1 min-h-0 overflow-hidden">
+            <!-- Sounds column -->
+            <div class="flex-1 border-r border-gray-700 flex flex-col min-w-0">
+              <div class="px-3 py-2 border-b border-gray-700 shrink-0">
+                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Sounds</span>
+              </div>
+              <div class="flex-1 overflow-y-auto">
                 <div
-                  class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-800/50 select-none"
-                  @click="toggleCategory(cat)"
+                  v-if="!selectedPackInfo"
+                  class="flex items-center justify-center h-full text-gray-600 text-sm"
                 >
-                  <span class="text-gray-400 text-xs w-3">
-                    {{ expandedCategories.has(cat) ? '▾' : '▸' }}
-                  </span>
-                  <input
-                    type="checkbox"
-                    class="w-4 h-4 accent-indigo-400 cursor-pointer"
-                    :checked="categoryAllEnabled(cat)"
-                    :disabled="(selectedPackInfo.categories[cat]?.length ?? 0) === 0"
-                    @click.stop
-                    @change="toggleCategoryEnabled(cat, ($event.target as HTMLInputElement).checked)"
-                  />
-                  <span class="text-sm text-gray-300 font-mono flex-1">{{ cat }}</span>
+                  Select a pack
+                </div>
+                <!-- US-005 will populate sound file list here -->
+              </div>
+            </div>
+
+            <!-- Events column -->
+            <div class="flex-1 flex flex-col min-w-0">
+              <div class="px-3 py-2 border-b border-gray-700 shrink-0">
+                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Events</span>
+              </div>
+              <div class="flex-1 overflow-y-auto">
+                <div
+                  v-for="eventType in AGENT_EVENT_TYPES"
+                  :key="eventType"
+                  class="flex items-center gap-2 px-3 py-2 border-b border-gray-800 transition-opacity"
+                  :class="hasAssignments(eventType) ? 'opacity-100' : 'opacity-40'"
+                >
+                  <span class="text-sm font-mono text-gray-300 flex-1">{{ eventType }}</span>
                   <!-- Info icon + popover -->
                   <span
-                    v-if="EVENT_DESCRIPTIONS[cat]"
-                    class="relative"
+                    v-if="EVENT_DESCRIPTIONS[eventType]"
+                    class="relative shrink-0"
                     @click.stop
                   >
                     <span
                       class="w-4 h-4 flex items-center justify-center rounded-full border text-[10px] leading-none cursor-pointer select-none"
-                      :class="activeInfoPopover === cat
+                      :class="activeInfoPopover === eventType
                         ? 'border-indigo-400 text-indigo-300 bg-indigo-900/40'
                         : 'border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-200'"
-                      @click="toggleInfoPopover(cat)"
+                      @click="toggleInfoPopover(eventType)"
                     >i</span>
                     <div
-                      v-if="activeInfoPopover === cat"
+                      v-if="activeInfoPopover === eventType"
                       class="absolute right-0 top-6 z-50 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg px-3 py-2 text-xs text-gray-200 leading-relaxed"
                     >
-                      {{ EVENT_DESCRIPTIONS[cat] }}
+                      {{ EVENT_DESCRIPTIONS[eventType] }}
                     </div>
                   </span>
-                  <span
-                    v-if="(selectedPackInfo.categories[cat]?.length ?? 0) > 0"
-                    class="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"
-                  >
-                    {{ selectedPackInfo.categories[cat]?.length ?? 0 }}
-                  </span>
-                  <!-- Add files button -->
-                  <button
-                    class="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-600 text-gray-400 hover:text-gray-200 text-sm"
-                    title="Add audio files"
-                    @click.stop="addFilesToCategory(cat)"
-                  >
-                    +
-                  </button>
-                </div>
-
-                <!-- Expanded: file list -->
-                <div v-if="expandedCategories.has(cat)" class="pb-1">
-                  <AudioPlayer
-                    v-for="filename in (selectedPackInfo.categories[cat] ?? [])"
-                    :key="filename"
-                    :pack-name="selectedPack!"
-                    :category="cat"
-                    :filename="filename"
-                    :file-path="getFilePath(cat, filename)"
-                    @delete="deleteTrack(cat, filename)"
-                  />
-                  <div
-                    v-if="(selectedPackInfo.categories[cat]?.length ?? 0) === 0"
-                    class="px-8 py-2 text-xs text-gray-600 italic"
-                  >
-                    No audio files. Click + to add.
-                  </div>
+                  <!-- US-006 will add assignment chips here -->
                 </div>
               </div>
-            </template>
-            <div v-else class="flex items-center justify-center h-full text-gray-600 text-sm">
-              Select a pack to view its contents
             </div>
           </div>
         </div>
