@@ -476,6 +476,104 @@ function flashEventRow(eventType: AgentEventType): void {
   }, 200);
 }
 
+// ---- Add audio files to pack (OS drag + file picker) ----
+const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.ogg', '.flac', '.m4a', '.webm']);
+const audioDragOver = ref(false);
+
+function isAudioFile(filename: string): boolean {
+  const dot = filename.lastIndexOf('.');
+  if (dot < 0) return false;
+  return AUDIO_EXTENSIONS.has(filename.slice(dot).toLowerCase());
+}
+
+async function addAudioFilesFromBlobs(
+  files: { name: string; bytes: Uint8Array }[],
+): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  const baseDir = soundStore.getSoundPacksDir();
+  const packPath = `${baseDir}/${selectedPack.value}`;
+  const manifest = selectedPackInfo.value.manifest;
+  let changed = false;
+
+  for (const file of files) {
+    if (!isAudioFile(file.name)) continue;
+    await writeFile(`${packPath}/${file.name}`, file.bytes);
+    const alreadyInManifest = manifest.sounds.some(
+      (s) => s.file === file.name,
+    );
+    if (!alreadyInManifest) {
+      manifest.sounds.push({
+        file: file.name,
+        volume: 1.0,
+        enabled: true,
+      });
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await soundStore.savePackManifest(selectedPack.value, manifest);
+  }
+  if (selectedPack.value) {
+    void checkSoundFileExistence(selectedPack.value);
+  }
+}
+
+function onAudioDragOver(e: DragEvent): void {
+  if (!selectedPack.value) return;
+  e.preventDefault();
+  e.stopPropagation();
+  audioDragOver.value = true;
+}
+
+function onAudioDragLeave(): void {
+  audioDragOver.value = false;
+}
+
+async function onAudioDrop(e: DragEvent): Promise<void> {
+  e.preventDefault();
+  e.stopPropagation();
+  audioDragOver.value = false;
+  if (!selectedPack.value) return;
+  const dataFiles = e.dataTransfer?.files;
+  if (!dataFiles || dataFiles.length === 0) return;
+
+  const blobs: { name: string; bytes: Uint8Array }[] = [];
+  for (let i = 0; i < dataFiles.length; i++) {
+    const f = dataFiles[i];
+    if (!f || !isAudioFile(f.name)) continue;
+    const buf = await f.arrayBuffer();
+    blobs.push({ name: f.name, bytes: new Uint8Array(buf) });
+  }
+  if (blobs.length > 0) {
+    await addAudioFilesFromBlobs(blobs);
+  }
+}
+
+async function openAddFilePicker(): Promise<void> {
+  if (!selectedPack.value) return;
+  const result = await open({
+    filters: [{
+      name: 'Audio',
+      extensions: ['wav', 'mp3', 'ogg', 'flac', 'm4a', 'webm'],
+    }],
+    multiple: true,
+  });
+  if (!result) return;
+  const paths = Array.isArray(result) ? result : [result];
+  const blobs: { name: string; bytes: Uint8Array }[] = [];
+  for (const filePath of paths) {
+    if (!filePath) continue;
+    const filename = filePath.split('/').pop() ?? '';
+    if (!isAudioFile(filename)) continue;
+    const bytes = await readFile(filePath);
+    blobs.push({ name: filename, bytes });
+  }
+  if (blobs.length > 0) {
+    await addAudioFilesFromBlobs(blobs);
+  }
+}
+
 // Reset scroll + stop preview + check file existence on pack change
 watch(selectedPack, async (packName) => {
   stopPreview();
@@ -614,11 +712,28 @@ watch(selectedPack, async (packName) => {
           <!-- Patchbay: Sounds + Events columns -->
           <div ref="rightPanel" class="flex flex-1 min-h-0 overflow-hidden">
             <!-- Sounds column -->
-            <div class="flex-1 border-r border-gray-700 flex flex-col min-w-0">
-              <div class="px-3 py-2 border-b border-gray-700 shrink-0">
-                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Sounds</span>
+            <div
+              class="flex-1 border-r border-gray-700 flex flex-col min-w-0"
+              @dragover="onAudioDragOver"
+              @dragleave="onAudioDragLeave"
+              @drop="onAudioDrop"
+            >
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-700 shrink-0">
+                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Sounds</span>
+                <button
+                  v-if="selectedPack"
+                  class="px-2 py-0.5 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-300"
+                  @click="openAddFilePicker"
+                >Add file</button>
               </div>
-              <div class="flex-1 overflow-y-auto">
+              <div class="flex-1 overflow-y-auto relative">
+                <!-- Audio file drop overlay -->
+                <div
+                  v-if="audioDragOver && selectedPack"
+                  class="absolute inset-0 z-10 flex items-center justify-center bg-indigo-900/60 border-2 border-dashed border-indigo-400 rounded pointer-events-none"
+                >
+                  <span class="text-indigo-200 text-sm font-semibold">Drop audio files here</span>
+                </div>
                 <div
                   v-if="!selectedPackInfo"
                   class="flex items-center justify-center h-full text-gray-600 text-sm"
