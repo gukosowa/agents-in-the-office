@@ -7,8 +7,9 @@ import {
   mkdir,
   exists,
   readDir,
+  readFile,
 } from '@tauri-apps/plugin-fs';
-import type { AgentEventType } from '../drivers/types';
+import type { AgentEvent, AgentEventType } from '../drivers/types';
 
 export const AGENT_EVENT_TYPES: AgentEventType[] = [
   'session_start',
@@ -66,8 +67,31 @@ function hasAudioExtension(filename: string): boolean {
 export const useSoundStore = defineStore('sound', () => {
   const config = ref<SoundConfig>({ ...DEFAULT_CONFIG, tracks: {} });
   const packs = ref<PackInfo[]>([]);
+
+  // Reactive state for sound indicator (US-009)
+  const lastPlayedSessionId = ref<string | null>(null);
+
   let soundPacksDir = '';
   let configPath = '';
+
+  // AudioContext — lazy init on first playback
+  let audioCtx: AudioContext | null = null;
+
+  // Buffer cache: absolute file path → AudioBuffer
+  const bufferCache = new Map<string, AudioBuffer>();
+
+  // Per-category cooldown timestamps (category → last played ms)
+  const cooldownMap = new Map<string, number>();
+
+  // Whether any sound is currently playing
+  let playing = false;
+
+  // Per-session pack assignment
+  const sessionPacks = new Map<string, string>();
+
+  // -------------------------------------------------------------------------
+  // Init / persistence
+  // -------------------------------------------------------------------------
 
   async function init(): Promise<void> {
     const home = await homeDir();
@@ -97,6 +121,10 @@ export const useSoundStore = defineStore('sound', () => {
     await writeTextFile(configPath, JSON.stringify(config.value, null, 2));
   }
 
+  // -------------------------------------------------------------------------
+  // Pack scanning
+  // -------------------------------------------------------------------------
+
   async function scanPacks(): Promise<PackInfo[]> {
     const discovered: PackInfo[] = [];
 
@@ -111,7 +139,6 @@ export const useSoundStore = defineStore('sound', () => {
       const packPath = `${soundPacksDir}/${packName}`;
       const categories: Record<string, string[]> = {};
 
-      // Read category subdirectories (matching AgentEventType values)
       const catEntries = await readDir(packPath);
       for (const cat of catEntries) {
         if (!cat.isDirectory) continue;
@@ -127,7 +154,6 @@ export const useSoundStore = defineStore('sound', () => {
         }
       }
 
-      // Ensure all 16 event type category slots exist in the result
       for (const eventType of AGENT_EVENT_TYPES) {
         if (!(eventType in categories)) {
           categories[eventType] = [];
@@ -141,13 +167,16 @@ export const useSoundStore = defineStore('sound', () => {
     return discovered;
   }
 
+  // -------------------------------------------------------------------------
+  // Track config helpers
+  // -------------------------------------------------------------------------
+
   function getTrackConfig(packName: string, categoryAndFile: string): TrackConfig {
     const packTracks = config.value.tracks[packName];
     if (packTracks) {
       const existing = packTracks[categoryAndFile];
       if (existing !== undefined) return existing;
     }
-    // Default on first access
     const defaultTrack: TrackConfig = { enabled: true, volume: 1.0 };
     if (!config.value.tracks[packName]) {
       config.value.tracks[packName] = {};
@@ -167,14 +196,131 @@ export const useSoundStore = defineStore('sound', () => {
     return soundPacksDir;
   }
 
+  // -------------------------------------------------------------------------
+  // AudioContext helpers
+  // -------------------------------------------------------------------------
+
+  function getAudioContext(): AudioContext {
+    if (!audioCtx) {
+      audioCtx = new AudioContext();
+    }
+    return audioCtx;
+  }
+
+  async function loadBuffer(filePath: string): Promise<AudioBuffer | null> {
+    const cached = bufferCache.get(filePath);
+    if (cached !== undefined) return cached;
+
+    try {
+      const bytes = await readFile(filePath);
+      const ctx = getAudioContext();
+      const buffer = await ctx.decodeAudioData(bytes.buffer as ArrayBuffer);
+      bufferCache.set(filePath, buffer);
+      return buffer;
+    } catch (err) {
+      console.warn(`[soundStore] Failed to decode audio: ${filePath}`, err);
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Playback engine
+  // -------------------------------------------------------------------------
+
+  async function playForEvent(event: AgentEvent): Promise<void> {
+    if (!config.value.enabled) return;
+
+    // Session pack assignment on session_start
+    if (event.type === 'session_start') {
+      const { activePacks } = config.value;
+      if (activePacks.length > 0) {
+        const randomIdx = Math.floor(Math.random() * activePacks.length);
+        const chosen = activePacks[randomIdx];
+        if (chosen !== undefined) {
+          sessionPacks.set(event.sessionId, chosen);
+        }
+      }
+    }
+
+    const packName = sessionPacks.get(event.sessionId);
+    if (!packName) return;
+
+    const category = event.type;
+    const now = Date.now();
+    const cooldownMs = config.value.cooldownSeconds * 1000;
+    const lastPlayed = cooldownMap.get(category) ?? 0;
+    if (now - lastPlayed < cooldownMs) return;
+
+    if (playing) return;
+
+    // Find the pack info
+    const packInfo = packs.value.find((p) => p.name === packName);
+    const files = packInfo?.categories[category] ?? [];
+
+    // Filter to enabled tracks
+    const enabledFiles = files.filter((filename) => {
+      const key = `${category}/${filename}`;
+      return getTrackConfig(packName, key).enabled;
+    });
+
+    if (enabledFiles.length === 0) return;
+
+    const randomFileIdx = Math.floor(Math.random() * enabledFiles.length);
+    const chosenFile = enabledFiles[randomFileIdx];
+    if (chosenFile === undefined) return;
+
+    const filePath = `${soundPacksDir}/${packName}/${category}/${chosenFile}`;
+    const buffer = await loadBuffer(filePath);
+    if (!buffer) return;
+
+    const trackKey = `${category}/${chosenFile}`;
+    const trackCfg = getTrackConfig(packName, trackKey);
+    const ctx = getAudioContext();
+
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = config.value.globalVolume * trackCfg.volume;
+    gainNode.connect(ctx.destination);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gainNode);
+
+    playing = true;
+    cooldownMap.set(category, now);
+    lastPlayedSessionId.value = event.sessionId;
+
+    source.onended = () => {
+      playing = false;
+    };
+
+    source.start();
+  }
+
+  // -------------------------------------------------------------------------
+  // Public AudioContext access (for AudioPlayer.vue)
+  // -------------------------------------------------------------------------
+
+  function getOrCreateAudioContext(): AudioContext {
+    return getAudioContext();
+  }
+
+  function getBufferCache(): Map<string, AudioBuffer> {
+    return bufferCache;
+  }
+
   return {
     config,
     packs,
+    lastPlayedSessionId,
     init,
     saveConfig,
     scanPacks,
     getTrackConfig,
     setTrackConfig,
     getSoundPacksDir,
+    playForEvent,
+    getOrCreateAudioContext,
+    getBufferCache,
+    loadBuffer,
   };
 });
