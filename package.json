@@ -17,6 +17,7 @@
     "@tauri-apps/plugin-fs": "^2.4.5",
     "autoprefixer": "^10.4.24",
     "idb": "^8.0.3",
+    "jszip": "^3.10.1",
     "lucide-vue-next": "^0.575.0",
     "pinia": "^3.0.4",
     "postcss": "^8.5.6",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
+    "@types/jszip": "^3.4.1",
     "@types/node": "^24.10.1",
     "@vitejs/plugin-vue": "^6.0.2",
     "@vue/tsconfig": "^0.8.1",
