@@ -514,8 +514,10 @@ const onImageLoad = () => {
 const resizeCanvas = () => {
   const img = activeSlotImage.value;
   if (img && overlayCanvas.value) {
-    overlayCanvas.value.width = img.width;
-    overlayCanvas.value.height = img.height;
+    // Match canvas resolution to CSS display size so 1 canvas px = 1 CSS px.
+    // This prevents subpixel artifacts when the tileset is zoomed to fit.
+    overlayCanvas.value.width = Math.round(img.width * zoomScale.value);
+    overlayCanvas.value.height = Math.round(img.height * zoomScale.value);
   }
 };
 
@@ -524,6 +526,9 @@ const drawOverlay = () => {
   const img = activeSlotImage.value;
   if (!ctx || !img) return;
 
+  // All drawing uses sts (scaled tile size = tile size in CSS pixels).
+  const sts = mapStore.tileSize * zoomScale.value;
+
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
@@ -531,15 +536,11 @@ const drawOverlay = () => {
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = 0; x <= ctx.canvas.width; x += mapStore.tileSize) {
+  for (let x = 0; x <= ctx.canvas.width; x += sts) {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, ctx.canvas.height);
   }
-  for (
-    let y = 0;
-    y <= ctx.canvas.height;
-    y += mapStore.tileSize
-  ) {
+  for (let y = 0; y <= ctx.canvas.height; y += sts) {
     ctx.moveTo(0, y);
     ctx.lineTo(ctx.canvas.width, y);
   }
@@ -549,7 +550,6 @@ const drawOverlay = () => {
   const depthMap =
     mapStore.tileDepthMaps[editorStore.activeSlot];
   if (depthMap && panelMode.value === 'depth') {
-    const ts = mapStore.tileSize;
     const depthColors: Record<number, [string, string]> = {
       [-1]: ['rgba(59, 130, 246, 0.35)', '#3b82f6'],
       [1]: ['rgba(245, 158, 11, 0.35)', '#f59e0b'],
@@ -564,15 +564,15 @@ const drawOverlay = () => {
       const colors = depthColors[depth];
       if (!colors) continue;
       ctx.fillStyle = colors[0];
-      ctx.fillRect(cx * ts, cy * ts, ts, ts);
+      ctx.fillRect(cx * sts, cy * sts, sts, sts);
       ctx.fillStyle = colors[1];
-      ctx.font = 'bold 10px monospace';
+      ctx.font = `bold ${Math.round(10 * zoomScale.value)}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(
         depthLabels[depth] ?? '',
-        cx * ts + ts / 2,
-        cy * ts + ts / 2,
+        cx * sts + sts / 2,
+        cy * sts + sts / 2,
       );
     }
   }
@@ -581,20 +581,19 @@ const drawOverlay = () => {
   const colMap =
     mapStore.tileCollisionMaps[editorStore.activeSlot];
   if (colMap && panelMode.value === 'collision') {
-    const ts = mapStore.tileSize;
     for (const key of Object.keys(colMap)) {
       const [cx, cy] = key.split(',').map(Number);
       if (cx === undefined || cy === undefined) continue;
       ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
-      ctx.fillRect(cx * ts, cy * ts, ts, ts);
+      ctx.fillRect(cx * sts, cy * sts, sts, sts);
       ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 2;
-      const pad = 4;
+      const pad = Math.max(2, 4 * zoomScale.value);
       ctx.beginPath();
-      ctx.moveTo(cx * ts + pad, cy * ts + pad);
-      ctx.lineTo(cx * ts + ts - pad, cy * ts + ts - pad);
-      ctx.moveTo(cx * ts + ts - pad, cy * ts + pad);
-      ctx.lineTo(cx * ts + pad, cy * ts + ts - pad);
+      ctx.moveTo(cx * sts + pad, cy * sts + pad);
+      ctx.lineTo(cx * sts + sts - pad, cy * sts + sts - pad);
+      ctx.moveTo(cx * sts + sts - pad, cy * sts + pad);
+      ctx.lineTo(cx * sts + pad, cy * sts + sts - pad);
       ctx.stroke();
     }
   }
@@ -603,49 +602,44 @@ const drawOverlay = () => {
   const intMap =
     mapStore.tileInteractiveMaps[editorStore.activeSlot];
   if (intMap && panelMode.value === 'interactive') {
-    const ts = mapStore.tileSize;
     for (const [key, def] of Object.entries(intMap)) {
       const [cx, cy] = key.split(',').map(Number);
       if (cx === undefined || cy === undefined) continue;
       ctx.fillStyle = 'rgba(16, 185, 129, 0.35)';
-      ctx.fillRect(cx * ts, cy * ts, ts, ts);
+      ctx.fillRect(cx * sts, cy * sts, sts, sts);
       const emoji = objectEmojiMap.get(def.type) ?? '?';
-      const fontSize = Math.max(8, ts * 0.45);
+      const fontSize = Math.max(8, sts * 0.45);
       ctx.font = `${fontSize}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#fff';
-      ctx.fillText(emoji, cx * ts + ts / 2, cy * ts + ts * 0.38);
+      ctx.fillText(emoji, cx * sts + sts / 2, cy * sts + sts * 0.38);
       const arrow = DIRECTION_ARROWS[def.direction] ?? '';
-      ctx.font = `bold ${Math.max(6, ts * 0.22)}px sans-serif`;
+      ctx.font = `bold ${Math.max(6, sts * 0.22)}px sans-serif`;
       ctx.fillStyle = '#6ee7b7';
       ctx.fillText(
-        arrow, cx * ts + ts / 2, cy * ts + ts * 0.78,
+        arrow, cx * sts + sts / 2, cy * sts + sts * 0.78,
       );
     }
   }
 
-  // Draw selection highlight
+  // Draw selection highlight.
+  // Canvas is now 1:1 with CSS pixels so lineWidth values are in real pixels —
+  // no subpixel artifacts regardless of zoomScale.
+  const drawSelectionRect = (ox: number, oy: number, ow: number, oh: number) => {
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(ox + 1.5, oy + 1.5, ow - 3, oh - 3);
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ox + 0.75, oy + 0.75, ow - 1.5, oh - 1.5);
+  };
   if (editorStore.selectedSelection) {
     const { x, y, w, h } = editorStore.selectedSelection;
-    ctx.strokeStyle = '#ffff00';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(
-      x * mapStore.tileSize,
-      y * mapStore.tileSize,
-      w * mapStore.tileSize,
-      h * mapStore.tileSize,
-    );
+    drawSelectionRect(x * sts, y * sts, w * sts, h * sts);
   } else if (editorStore.selectedTile) {
     const { x, y } = editorStore.selectedTile;
-    ctx.strokeStyle = '#ffff00';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(
-      x * mapStore.tileSize,
-      y * mapStore.tileSize,
-      mapStore.tileSize,
-      mapStore.tileSize,
-    );
+    drawSelectionRect(x * sts, y * sts, sts, sts);
   }
 };
 
@@ -661,8 +655,9 @@ const getGridCoord = (e: MouseEvent) => {
   const canvasX = (e.clientX - rect.left) * scaleX;
   const canvasY = (e.clientY - rect.top) * scaleY;
 
-  let x = Math.floor(canvasX / mapStore.tileSize);
-  let y = Math.floor(canvasY / mapStore.tileSize);
+  const sts = mapStore.tileSize * zoomScale.value;
+  let x = Math.floor(canvasX / sts);
+  let y = Math.floor(canvasY / sts);
 
   x = Math.max(0, Math.min(x, maxX));
   y = Math.max(0, Math.min(y, maxY));
@@ -796,6 +791,10 @@ watch(
   () => mapStore.tileInteractiveMaps, drawOverlay, { deep: true },
 );
 watch(() => mapStore.tileSize, () => {
+  resizeCanvas();
+  drawOverlay();
+});
+watch(zoomScale, () => {
   resizeCanvas();
   drawOverlay();
 });

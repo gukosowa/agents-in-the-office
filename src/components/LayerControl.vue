@@ -25,6 +25,9 @@ const renameInput = ref<HTMLInputElement | null>(null);
 const collapsed = ref(false);
 const dragFromIndex = ref<number | null>(null);
 const dragOverIndex = ref<number | null>(null);
+const listRef = ref<HTMLElement | null>(null);
+const ghostPos = ref<{ x: number; y: number } | null>(null);
+const ghostName = ref('');
 
 // ── Anchored confirm popover ───────────────────────────────────
 
@@ -139,48 +142,75 @@ function commitRename() {
   editingIndex.value = null;
 }
 
-function handleDragStart(index: number) {
-  dragFromIndex.value = index;
-}
+function completeDrop(fromIdx: number, toIndex: number) {
+  // toIndex is "insert before this slot"; layers.length means "append at end".
+  // After splice(fromIdx, 1) all indices > fromIdx shift down by 1, so the
+  // original toIndex element is now at toIndex-1 when dragging down.
+  const maxIdx = mapStore.layers.length - 1;
+  const adjustedTo = fromIdx < toIndex
+    ? Math.min(toIndex - 1, maxIdx)
+    : toIndex;
+  if (adjustedTo < 0 || adjustedTo > maxIdx || adjustedTo === fromIdx) return;
 
-function handleDragOver(e: DragEvent, index: number) {
-  e.preventDefault();
-  dragOverIndex.value = index;
-}
-
-function handleDrop(toIndex: number) {
-  if (
-    dragFromIndex.value !== null
-    && dragFromIndex.value !== toIndex
-  ) {
-    const fromIdx = dragFromIndex.value;
-    const wasActive = editorStore.activeLayer === fromIdx;
-    mapStore.moveLayer(fromIdx, toIndex);
-    undoStore.push({
-      label: 'Move Layer',
-      patch: { kind: 'layerMove', fromIndex: fromIdx, toIndex },
-    });
-    if (wasActive) {
-      editorStore.setLayer(toIndex);
-    } else if (
-      editorStore.activeLayer >= fromIdx
-      && editorStore.activeLayer <= toIndex
-    ) {
-      editorStore.setLayer(editorStore.activeLayer - 1);
-    } else if (
-      editorStore.activeLayer <= fromIdx
-      && editorStore.activeLayer >= toIndex
-    ) {
-      editorStore.setLayer(editorStore.activeLayer + 1);
-    }
+  const wasActive = editorStore.activeLayer === fromIdx;
+  mapStore.moveLayer(fromIdx, adjustedTo);
+  undoStore.push({
+    label: 'Move Layer',
+    patch: { kind: 'layerMove', fromIndex: fromIdx, toIndex: adjustedTo },
+  });
+  if (wasActive) {
+    editorStore.setLayer(adjustedTo);
+  } else if (editorStore.activeLayer > fromIdx && editorStore.activeLayer <= adjustedTo) {
+    editorStore.setLayer(editorStore.activeLayer - 1);
+  } else if (editorStore.activeLayer < fromIdx && editorStore.activeLayer >= adjustedTo) {
+    editorStore.setLayer(editorStore.activeLayer + 1);
   }
-  dragFromIndex.value = null;
-  dragOverIndex.value = null;
 }
 
-function handleDragEnd() {
-  dragFromIndex.value = null;
+function handleRowMouseDown(e: MouseEvent, fromIndex: number) {
+  if (e.button !== 0) return;
+  // Don't start drag on double-click (would conflict with rename)
+  if (e.detail >= 2) return;
+  e.preventDefault();
+  dragFromIndex.value = fromIndex;
   dragOverIndex.value = null;
+  ghostName.value = mapStore.layerMeta[fromIndex]?.name ?? '';
+  ghostPos.value = { x: e.clientX, y: e.clientY };
+  document.body.style.cursor = 'grabbing';
+
+  const updateOver = (clientY: number) => {
+    if (!listRef.value) return;
+    const rows = listRef.value.querySelectorAll<HTMLElement>('[data-layer-row]');
+    let over: number | null = null;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      if (clientY < rect.top + rect.height / 2) {
+        over = Number(row.dataset['layerRow']);
+        break;
+      }
+    }
+    // Below midpoint of last row → sentinel for "append at end"
+    dragOverIndex.value = over ?? mapStore.layers.length;
+  };
+
+  const onMove = (ev: MouseEvent) => {
+    ghostPos.value = { x: ev.clientX, y: ev.clientY };
+    updateOver(ev.clientY);
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    if (dragFromIndex.value !== null && dragOverIndex.value !== null) {
+      completeDrop(dragFromIndex.value, dragOverIndex.value);
+    }
+    dragFromIndex.value = null;
+    dragOverIndex.value = null;
+    ghostPos.value = null;
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 </script>
 
@@ -220,14 +250,15 @@ function handleDragEnd() {
         </button>
       </div>
     </div>
-    <div v-if="!collapsed" class="flex flex-col gap-1 overflow-y-auto px-4 pb-3">
+    <div v-if="!collapsed" ref="listRef" class="flex flex-col gap-1 overflow-y-auto px-4 pb-3">
       <div
         v-for="(meta, i) in mapStore.layerMeta"
         :key="i"
-        draggable="true"
+        :data-layer-row="i"
         :class="[
-          'flex items-center gap-1 px-2 py-1.5 rounded',
-          'text-sm transition-colors cursor-pointer',
+          'flex items-center gap-1 px-2 py-1.5 rounded select-none',
+          'text-sm transition-colors',
+          dragFromIndex !== null ? 'cursor-grabbing' : 'cursor-grab',
           editorStore.activeLayer === i
             ? 'bg-blue-600 text-white'
             : 'bg-gray-700 text-gray-300 hover:bg-gray-600',
@@ -235,16 +266,13 @@ function handleDragEnd() {
             ? 'border-t-2 border-blue-400'
             : 'border-t-2 border-transparent',
         ]"
+        @mousedown="handleRowMouseDown($event, i)"
         @click="editorStore.setLayer(i); editorStore.showInteractiveLayer = false"
-        @dragstart="handleDragStart(i)"
-        @dragover="handleDragOver($event, i)"
-        @drop="handleDrop(i)"
-        @dragend="handleDragEnd"
       >
-        <GripVertical :size="14" class="shrink-0 text-gray-500 cursor-grab" />
+        <GripVertical :size="14" class="shrink-0 text-gray-500 pointer-events-none" />
         <span
           v-if="editingIndex !== i"
-          class="flex-1 truncate select-none"
+          class="flex-1 truncate"
           @dblclick.stop="startRename(i)"
         >{{ meta.name }}</span>
         <input
@@ -258,10 +286,12 @@ function handleDragEnd() {
           @keydown.enter="commitRename"
           @keydown.escape="editingIndex = null"
           @click.stop
+          @mousedown.stop
         />
         <button
           class="p-0.5 rounded hover:bg-gray-500 transition-colors shrink-0"
           :title="meta.visible ? 'Hide layer' : 'Show layer'"
+          @mousedown.stop
           @click.stop="mapStore.toggleLayerVisibility(i)"
         >
           <Eye v-if="meta.visible" :size="14" />
@@ -270,6 +300,7 @@ function handleDragEnd() {
         <button
           class="p-0.5 rounded hover:bg-yellow-600 transition-colors shrink-0"
           title="Clear all tiles"
+          @mousedown.stop
           @click.stop="handleClearLayer(i, $event.currentTarget as HTMLElement)"
         >
           <XCircle :size="14" />
@@ -278,11 +309,20 @@ function handleDragEnd() {
           v-if="mapStore.layers.length > 1"
           class="p-0.5 rounded hover:bg-red-600 transition-colors shrink-0"
           title="Delete layer"
+          @mousedown.stop
           @click.stop="handleDeleteLayer(i, $event.currentTarget as HTMLElement)"
         >
           <Trash2 :size="14" />
         </button>
       </div>
+
+      <!-- Append-at-end drop indicator -->
+      <div
+        :class="[
+          'h-0.5 rounded mx-1 -mt-0.5 transition-colors',
+          dragOverIndex === mapStore.layers.length ? 'bg-blue-400' : 'bg-transparent',
+        ]"
+      />
 
       <!-- Interactive Objects layer (always at bottom) -->
       <div class="border-t border-gray-600 mt-1 pt-1">
@@ -325,6 +365,20 @@ function handleDragEnd() {
       </div>
     </div>
   </div>
+
+  <!-- Drag ghost -->
+  <Teleport to="body">
+    <div
+      v-if="ghostPos !== null"
+      class="fixed z-[200] pointer-events-none flex items-center gap-1.5
+             px-2 py-1.5 rounded bg-gray-700 text-gray-300 text-sm
+             select-none opacity-40 whitespace-nowrap"
+      :style="{ left: `${ghostPos.x + 14}px`, top: `${ghostPos.y - 14}px` }"
+    >
+      <GripVertical :size="14" class="text-gray-500" />
+      <span>{{ ghostName }}</span>
+    </div>
+  </Teleport>
 
   <!-- Anchored confirm popover -->
   <Teleport to="body">

@@ -91,8 +91,8 @@ const pickedBrush = ref<CellValue[][] | null>(null);
 let isInitialPlacement = false;
 let multiTileAnchorX = 0;
 let multiTileAnchorY = 0;
-let multiTileLastSnapX = -1;
-let multiTileLastSnapY = -1;
+const eraserBrushW = ref(1);
+const eraserBrushH = ref(1);
 
 // Clear canvas-picked brush when palette selection changes.
 // flush:'sync' ensures the watch runs before any subsequent pickedBrush assignment.
@@ -381,6 +381,8 @@ const pickTilesFromMap = (e: MouseEvent) => {
     editorStore.setTool('pen');
   } else {
     pickedBrush.value = null;
+    eraserBrushW.value = w;
+    eraserBrushH.value = h;
     editorStore.setTool('eraser');
   }
 };
@@ -652,6 +654,25 @@ const drawRectPreviewTiles = (
   }
 };
 
+/**
+ * Draw a hover rect with a dark shadow behind the colored stroke so it remains
+ * visible on both light and dark tiles.  All dimensions are in world (map) units.
+ * `lw` is already zoom-compensated (i.e. 2 / zoom).
+ */
+const strokeHoverRect = (
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  color: string,
+  lw: number,
+) => {
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = lw * 2;
+  ctx.strokeRect(x + lw, y + lw, w - lw * 2, h - lw * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lw;
+  ctx.strokeRect(x + lw / 2, y + lw / 2, w - lw, h - lw);
+};
+
 const render = () => {
   const ctx = canvas.value?.getContext('2d');
   if (!ctx || !canvas.value) return;
@@ -786,7 +807,8 @@ const render = () => {
     && tool !== 'move'
   ) {
     ctx.save();
-    ctx.lineWidth = 2 / editorStore.zoom;
+    const lw = 2 / editorStore.zoom;
+    ctx.lineWidth = lw;
     if (tool === 'spawn') {
       // Green circle preview for spawn tool
       const cx = hoverX.value * ts + ts / 2;
@@ -804,12 +826,8 @@ const render = () => {
       const brush = pickedBrush.value;
       const bw = brush[0]?.length ?? 1;
       const bh = brush.length;
-      const sx = isDrawing.value
-        ? multiTileAnchorX + Math.floor((hoverX.value - multiTileAnchorX) / bw) * bw
-        : hoverX.value;
-      const sy = isDrawing.value
-        ? multiTileAnchorY + Math.floor((hoverY.value - multiTileAnchorY) / bh) * bh
-        : hoverY.value;
+      const sx = hoverX.value;
+      const sy = hoverY.value;
       if (!isDrawing.value) {
         ctx.globalAlpha = 0.5;
         for (let dy = 0; dy < bh; dy++) {
@@ -845,8 +863,7 @@ const render = () => {
         }
         ctx.globalAlpha = 1.0;
       }
-      ctx.strokeStyle = hoverColor;
-      ctx.strokeRect(sx * ts, sy * ts, bw * ts, bh * ts);
+      strokeHoverRect(ctx, sx * ts, sy * ts, bw * ts, bh * ts, hoverColor, lw);
     } else if (
       editorStore.selectedAutoTile
       && tool === 'pen'
@@ -865,10 +882,7 @@ const render = () => {
         );
       }
       ctx.globalAlpha = 1.0;
-      ctx.strokeStyle = '#eab308';
-      ctx.strokeRect(
-        hoverX.value * ts, hoverY.value * ts, ts, ts,
-      );
+      strokeHoverRect(ctx, hoverX.value * ts, hoverY.value * ts, ts, ts, '#eab308', lw);
     } else if (
       editorStore.selectedSelection
       && tool === 'pen'
@@ -878,12 +892,8 @@ const render = () => {
       const fY = editorStore.tileFlipY;
       const rot = editorStore.tileRotation;
       const { ew, eh } = effectiveDims(w, h, rot);
-      const sx = isDrawing.value
-        ? multiTileAnchorX + Math.floor((hoverX.value - multiTileAnchorX) / ew) * ew
-        : hoverX.value;
-      const sy = isDrawing.value
-        ? multiTileAnchorY + Math.floor((hoverY.value - multiTileAnchorY) / eh) * eh
-        : hoverY.value;
+      const sx = hoverX.value;
+      const sy = hoverY.value;
       if (!isDrawing.value) {
         const hoverImg = mapStore.getSlotImage(slot);
         if (hoverImg) {
@@ -903,8 +913,7 @@ const render = () => {
           ctx.globalAlpha = 1.0;
         }
       }
-      ctx.strokeStyle = hoverColor;
-      ctx.strokeRect(sx * ts, sy * ts, ew * ts, eh * ts);
+      strokeHoverRect(ctx, sx * ts, sy * ts, ew * ts, eh * ts, hoverColor, lw);
     } else if (editorStore.selectedTile && tool === 'pen') {
       const tile = editorStore.selectedTile;
       const img = mapStore.getSlotImage(tile.slot);
@@ -918,13 +927,12 @@ const render = () => {
         );
       }
       ctx.globalAlpha = 1.0;
-      ctx.strokeStyle = hoverColor;
-      ctx.strokeRect(hoverX.value * ts, hoverY.value * ts, ts, ts);
+      strokeHoverRect(ctx, hoverX.value * ts, hoverY.value * ts, ts, ts, hoverColor, lw);
     } else {
-      ctx.strokeStyle = hoverColor;
-      ctx.strokeRect(
-        hoverX.value * ts, hoverY.value * ts,
-        ts, ts,
+      strokeHoverRect(
+        ctx, hoverX.value * ts, hoverY.value * ts,
+        eraserBrushW.value * ts, eraserBrushH.value * ts,
+        hoverColor, lw,
       );
     }
     // Mode badge in top-right corner of hovered cell
@@ -1925,23 +1933,18 @@ const handleDraw = (e: MouseEvent) => {
         isInitialPlacement = false;
         multiTileAnchorX = x;
         multiTileAnchorY = y;
-        multiTileLastSnapX = x;
-        multiTileLastSnapY = y;
-      } else {
-        const snapX = multiTileAnchorX
-          + Math.floor((x - multiTileAnchorX) / bw) * bw;
-        const snapY = multiTileAnchorY
-          + Math.floor((y - multiTileAnchorY) / bh) * bh;
-        if (snapX === multiTileLastSnapX && snapY === multiTileLastSnapY) return;
-        multiTileLastSnapX = snapX;
-        multiTileLastSnapY = snapY;
-        x = snapX;
-        y = snapY;
       }
       const adj = autoExpandForDraw(x, y, bw, bh);
+      // Shift anchor if map expanded left/top
+      multiTileAnchorX += adj.x - x;
+      multiTileAnchorY += adj.y - y;
       fillRectWithUndo(
         li, adj.x, adj.y, bw, bh,
-        (dx, dy) => brush[dy]?.[dx] ?? null,
+        (dx, dy) => {
+          const oX = ((adj.x - multiTileAnchorX + dx) % bw + bw) % bw;
+          const oY = ((adj.y - multiTileAnchorY + dy) % bh + bh) % bh;
+          return brush[oY]?.[oX] ?? null;
+        },
       );
     } else if (editorStore.selectedSelection) {
       const { x: tx, y: ty, w, h, slot } = editorStore.selectedSelection;
@@ -1953,25 +1956,17 @@ const handleDraw = (e: MouseEvent) => {
         isInitialPlacement = false;
         multiTileAnchorX = x;
         multiTileAnchorY = y;
-        multiTileLastSnapX = x;
-        multiTileLastSnapY = y;
-      } else {
-        const snapX = multiTileAnchorX
-          + Math.floor((x - multiTileAnchorX) / ew) * ew;
-        const snapY = multiTileAnchorY
-          + Math.floor((y - multiTileAnchorY) / eh) * eh;
-        if (snapX === multiTileLastSnapX && snapY === multiTileLastSnapY) return;
-        multiTileLastSnapX = snapX;
-        multiTileLastSnapY = snapY;
-        x = snapX;
-        y = snapY;
       }
       const adj = autoExpandForDraw(x, y, ew, eh);
+      multiTileAnchorX += adj.x - x;
+      multiTileAnchorY += adj.y - y;
       fillRectWithUndo(
         li, adj.x, adj.y, ew, eh,
         (dx, dy) => {
+          const oX = ((adj.x - multiTileAnchorX + dx) % ew + ew) % ew;
+          const oY = ((adj.y - multiTileAnchorY + dy) % eh + eh) % eh;
           const { sx, sy } = selectionSourceCoord(
-            dx, dy, w, h, fX, fY, rot,
+            oX, oY, w, h, fX, fY, rot,
           );
           return {
             x: tx + sx, y: ty + sy, slot,
@@ -1999,7 +1994,14 @@ const handleDraw = (e: MouseEvent) => {
       });
     }
   } else if (editorStore.selectedTool === 'eraser') {
-    setTileWithUndo(li, x, y, null);
+    const ew = eraserBrushW.value;
+    const eh = eraserBrushH.value;
+    if (ew > 1 || eh > 1) {
+      const adj = autoExpandForDraw(x, y, ew, eh);
+      fillRectWithUndo(li, adj.x, adj.y, ew, eh, () => null);
+    } else {
+      setTileWithUndo(li, x, y, null);
+    }
   }
 };
 
@@ -2025,6 +2027,8 @@ const pickTileAtCursor = (e: MouseEvent) => {
     editorStore.setSelectedTile({ ...cell });
     editorStore.setTool('pen');
   } else {
+    eraserBrushW.value = 1;
+    eraserBrushH.value = 1;
     editorStore.setTool('eraser');
   }
 };
@@ -2261,6 +2265,8 @@ const handleKeyDown = (e: KeyboardEvent) => {
     editorStore.selectedTile = null;
     editorStore.selectedSelection = null;
     editorStore.selectedAutoTile = null;
+    eraserBrushW.value = 1;
+    eraserBrushH.value = 1;
     editorStore.setTool('eraser');
     e.preventDefault();
     return;
