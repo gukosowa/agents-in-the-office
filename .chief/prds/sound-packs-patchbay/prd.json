@@ -90,7 +90,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 4,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-007",
@@ -106,7 +106,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 4,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-008",
@@ -121,7 +121,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 5,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-009",
@@ -137,7 +137,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 5,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-010",
@@ -152,7 +152,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 5,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-011",
@@ -167,7 +167,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 6,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-012",
@@ -181,7 +181,8 @@
         "vue-tsc -b passes"
       ],
       "priority": 6,
-      "passes": false
+      "passes": false,
+      "inProgress": true
     }
   ]
 }
