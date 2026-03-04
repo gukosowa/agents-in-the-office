@@ -29,6 +29,7 @@ import { createFallbackDefinitions } from '../utils/spriteLoader';
 import { getIdleConversation } from '../i18n/bubbleTexts';
 import { useAgentStore, type AgentStatus } from '../drivers/agentStore';
 import { createNpcHandle } from '../drivers/npcHandle';
+import { truncate } from '../drivers/activityMessages';
 import type {
   AgentEvent, SessionStateFile,
 } from '../drivers/types';
@@ -596,6 +597,9 @@ const spawnAgentNpc = (sessionId: string): void => {
   const handle = createNpcHandle(ch, sessionId);
   externalNpcSessions.set(ch.id, sessionId);
   agentStore.registerNpc(sessionId, ch.id, handle);
+  if (session?.parentSessionId && session.prompt) {
+    handle.showBubble(truncate(session.prompt, 80), 'speech', true);
+  }
   debugLog(
     sessionId, 'NPC_SPAWN',
     `npcId=${ch.id} door=${agentDoor.type}`,

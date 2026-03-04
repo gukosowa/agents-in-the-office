@@ -37,6 +37,7 @@ export interface AgentSession {
   prompt: string | null;
   latestPrompt: string | null;
   nameTag: string | null;
+  pendingSubagentPrompt: string | null;
   dismissing: boolean;
   status: AgentStatus;
   startedAt: number;
@@ -110,6 +111,7 @@ export const useAgentStore = defineStore('agent', () => {
       prompt: null,
       latestPrompt: null,
       nameTag: null,
+      pendingSubagentPrompt: null,
       dismissing: false,
       status: 'idle',
       startedAt: event.timestamp,
@@ -174,6 +176,7 @@ export const useAgentStore = defineStore('agent', () => {
     parentSessionId: string,
     nativeAgentId: string,
     parentTranscriptPath: string | null,
+    taskPrompt: string | null = null,
   ): Promise<HandleEventResult> {
     const subagentSessionId =
       `${parentSessionId.slice(0, 8)}-sub-${nativeAgentId}`;
@@ -193,9 +196,10 @@ export const useAgentStore = defineStore('agent', () => {
       cwd: null,
       termProgram: null,
       transcriptPath: null,
-      prompt: null,
+      prompt: taskPrompt ?? null,
       latestPrompt: null,
       nameTag: null,
+      pendingSubagentPrompt: null,
       dismissing: false,
       status: 'working',
       startedAt: Date.now(),
@@ -313,12 +317,18 @@ export const useAgentStore = defineStore('agent', () => {
             ? event.payload.agentId
             : null;
 
+        const taskPrompt = session.pendingSubagentPrompt;
+        session.pendingSubagentPrompt = null;
+
         session.driver.handleEvent(event, locale);
         session.lastEventAt = event.timestamp;
-        pushActivity(session, event, locale);
+        const displayEvent = taskPrompt
+          ? { ...event, payload: { ...event.payload, taskPrompt } }
+          : event;
+        pushActivity(session, displayEvent, locale);
         debugLog(
           sessionId, 'STORE_ROUTE',
-          `path=subagent_start agentId=${agentId ?? 'null'}`,
+          `path=subagent_start agentId=${agentId ?? 'null'} taskPrompt=${taskPrompt ?? 'null'}`,
         );
 
         if (agentId) {
@@ -327,7 +337,7 @@ export const useAgentStore = defineStore('agent', () => {
             ?? (typeof event.payload.transcriptPath === 'string'
               ? event.payload.transcriptPath : null);
           const subResult = await spawnSubagent(
-            sessionId, agentId, parentTranscriptPath,
+            sessionId, agentId, parentTranscriptPath, taskPrompt,
           );
           return [{ action: 'update', sessionId }, subResult];
         }
@@ -395,6 +405,20 @@ export const useAgentStore = defineStore('agent', () => {
           session.prompt = event.payload.prompt;
         }
         session.latestPrompt = event.payload.prompt;
+      }
+      if (event.type === 'tool_start') {
+        const toolName = String(event.payload.toolName ?? '');
+        if (toolName === 'Task' || toolName === 'Agent') {
+          const input = event.payload.toolInput;
+          if (input && typeof input === 'object' && !Array.isArray(input)) {
+            const inp = input as Record<string, unknown>;
+            const desc = typeof inp['description'] === 'string'
+              ? inp['description'] : null;
+            const prompt = typeof inp['prompt'] === 'string'
+              ? inp['prompt'] : null;
+            session.pendingSubagentPrompt = desc ?? prompt;
+          }
+        }
       }
       session.status = statusFromEvent(event.type);
       if (session.dismissing) {

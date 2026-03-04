@@ -240,6 +240,23 @@ export function formatActivityMessage(
     };
   }
 
+  if (event.type === 'subagent_start') {
+    const taskPrompt = typeof event.payload['taskPrompt'] === 'string'
+      ? event.payload['taskPrompt']
+      : null;
+    const label = locale === 'de' ? 'Sub-Aufgabe' : 'Sub-task';
+    const text = taskPrompt
+      ? `${label}: ${truncate(taskPrompt, 60)}`
+      : (locale === 'de' ? 'Sub-Aufgabe gestartet' : 'Started sub-task');
+    return {
+      id: crypto.randomUUID(),
+      timestamp: event.timestamp,
+      side: 'agent' as const,
+      text: pfx + text,
+      fullText: taskPrompt ?? undefined,
+    };
+  }
+
   if (event.type === 'turn_end' || event.type === 'subagent_end') {
     const msg = event.payload['lastAssistantMessage'];
     if (typeof msg === 'string' && msg.length > 0) {

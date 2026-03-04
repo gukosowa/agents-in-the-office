@@ -43,6 +43,7 @@ const expandedCategories = ref(new Set<string>());
 const rightPanel = ref<HTMLElement | null>(null);
 
 onMounted(async () => {
+  await soundStore.init();
   await soundStore.scanPacks();
   if (soundStore.packs.length > 0 && soundStore.packs[0]) {
     selectedPack.value = soundStore.packs[0].name;
@@ -106,13 +107,28 @@ async function onPackDeleted(name: string) {
 }
 
 // ---- New pack ----
-async function createNewPack() {
-  const name = prompt('Pack name:');
-  if (!name?.trim()) return;
-  const packName = name.trim();
+const newPackName = ref('');
+const creatingPack = ref(false);
+const newPackInput = ref<HTMLInputElement | null>(null);
+
+function startCreatePack() {
+  creatingPack.value = true;
+  newPackName.value = '';
+  void nextTick(() => newPackInput.value?.focus());
+}
+
+function cancelCreatePack() {
+  creatingPack.value = false;
+  newPackName.value = '';
+}
+
+async function confirmCreatePack() {
+  const packName = newPackName.value.trim();
+  if (!packName) return;
+  creatingPack.value = false;
+  newPackName.value = '';
   const baseDir = soundStore.getSoundPacksDir();
   const packPath = `${baseDir}/${packName}`;
-
   try {
     await mkdir(packPath, { recursive: true });
     for (const eventType of AGENT_EVENT_TYPES) {
