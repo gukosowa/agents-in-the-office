@@ -94,11 +94,12 @@ function selectPack(name: string) {
 }
 
 // ---- Context menu ----
-const ctxMenu = ref<{ packName: string; x: number; y: number } | null>(null);
+const ctxMenu = ref<{ packName: string; x: number; y: number; hasManifest: boolean } | null>(null);
 
 function onPackRightClick(e: MouseEvent, packName: string) {
   e.preventDefault();
-  ctxMenu.value = { packName, x: e.clientX, y: e.clientY };
+  const pack = soundStore.packs.find((p) => p.name === packName);
+  ctxMenu.value = { packName, x: e.clientX, y: e.clientY, hasManifest: pack?.hasManifest ?? true };
 }
 
 function closeCtxMenu() {
@@ -112,6 +113,11 @@ async function onPackRenamed(oldName: string, newName: string) {
 }
 
 async function onPackDuplicated() {
+  await soundStore.scanPacks();
+  closeCtxMenu();
+}
+
+async function onPackMigrated() {
   await soundStore.scanPacks();
   closeCtxMenu();
 }
@@ -786,6 +792,11 @@ watch(selectedPack, async (packName) => {
                   @blur="confirmEditPackName"
                 />
                 <span v-else class="text-sm text-gray-200 truncate flex-1">{{ pack.name }}</span>
+                <span
+                  v-if="!pack.hasManifest"
+                  class="shrink-0 text-[10px] px-1 py-0.5 rounded bg-amber-700/60 text-amber-200 leading-none"
+                  title="Old format — right-click to migrate"
+                >old</span>
               </div>
             </div>
             <!-- Buttons -->
@@ -1004,10 +1015,12 @@ watch(selectedPack, async (packName) => {
       :pack-name="ctxMenu.packName"
       :x="ctxMenu.x"
       :y="ctxMenu.y"
+      :has-manifest="ctxMenu.hasManifest"
       @close="closeCtxMenu"
       @renamed="onPackRenamed"
       @duplicated="onPackDuplicated"
       @deleted="onPackDeleted"
+      @migrated="onPackMigrated"
     />
   </Teleport>
 </template>
