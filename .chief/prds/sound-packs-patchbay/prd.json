@@ -1,0 +1,187 @@
+{
+  "project": "Sound Pack Patchbay Editor",
+  "description": "Redesign the SoundsDialog interior to a patchbay model: a split-view editor where sound files (left column) are explicitly wired to agent events (right column) via drag-and-drop. Replaces the implicit folder-name-to-event-type encoding with an explicit manifest.json per pack. Eliminates the need to copy audio files across event folders when one sound should serve multiple events.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "manifest.json schema + read/write in soundStore",
+      "description": "As a developer, I need the soundStore to read and write manifest.json from each pack directory so the patchbay has a persistent source of truth.",
+      "acceptanceCriteria": [
+        "PackManifest TypeScript interface: { sounds: Array\u003c{ file: string, volume: number, enabled: boolean }\u003e, assignments: Array\u003c{ file: string, event: AgentEventType }\u003e }",
+        "soundStore.loadPackManifest(packName) reads manifest.json from pack directory; returns empty manifest if file missing",
+        "soundStore.savePackManifest(packName, manifest) writes manifest.json to pack directory",
+        "soundStore.scanPacks() updated: scans pack directories for audio files AND reads manifest.json; PackInfo includes manifest data",
+        "vue-tsc -b passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "title": "config.json migration — soundOverrides replaces tracks",
+      "description": "As a developer, I need the config schema updated to store per-sound overrides by pack/filename key instead of category/filename.",
+      "acceptanceCriteria": [
+        "SoundConfig.soundOverrides: Record\u003cstring, { volume: number, enabled: boolean }\u003e where key is '\u003cpackName\u003e/\u003cfilename\u003e'",
+        "Old SoundConfig.tracks key still accepted on read (backward compat); migrated to soundOverrides on next write",
+        "effectiveVolume and isEnabled resolution follows the two-layer rule: soundOverrides → manifest default",
+        "vue-tsc -b passes"
+      ],
+      "priority": 1,
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "playForEvent updated for manifest-based lookup",
+      "description": "As a user, I want sounds to play based on manifest assignments so my patchbay configuration is reflected in runtime audio.",
+      "acceptanceCriteria": [
+        "playForEvent(event) looks up active pack for session → reads manifest.assignments filtered by event.type → collects enabled files → picks random → plays",
+        "Volume resolved via two-layer rule (US-002)",
+        "Missing file (in manifest but not on disk) is skipped with a console warning — no crash",
+        "Per-event cooldown still applies",
+        "vue-tsc -b passes"
+      ],
+      "priority": 2,
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "SoundsDialog — patchbay split view layout",
+      "description": "As a user, I want the SoundsDialog content area to show a two-column patchbay so I can see sounds and events side by side.",
+      "acceptanceCriteria": [
+        "Dialog content area (right of pack sidebar) splits into two equal columns",
+        "Left column header: 'Sounds', right column header: 'Events'",
+        "Right column shows all 16 AgentEventType values as rows",
+        "Event rows with no assignments are visually dimmed (reduced opacity or lighter text)",
+        "Event rows with assignments are full-opacity",
+        "Pack sidebar and context menu unchanged",
+        "vue-tsc -b passes"
+      ],
+      "priority": 3,
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Left column — sound file list with inline preview",
+      "description": "As a user, I want to see all audio files in the selected pack and preview them inline.",
+      "acceptanceCriteria": [
+        "Left column lists all files from manifest.sounds for selected pack",
+        "Each row shows: play button (left), raw filename, stop button (right)",
+        "Click play: loads and plays audio from start; if already playing, restarts from start",
+        "Click stop: stops current playback",
+        "Per-sound volume slider visible on hover",
+        "Per-sound enabled toggle (checkbox or switch) on each row",
+        "Changes to volume/enabled autosave: update manifest.sounds entry + write manifest.json",
+        "Missing file (in manifest but not on disk) shows red broken-link icon on row",
+        "vue-tsc -b passes"
+      ],
+      "priority": 3,
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Right column — event rows with sound chips",
+      "description": "As a user, I want each event row to show which sounds are assigned as removable chips.",
+      "acceptanceCriteria": [
+        "Each event row shows chips for all assigned sound files",
+        "Chip label: truncated filename (max ~20 chars with ellipsis)",
+        "Chip has × button; click × removes the (file, event) assignment from manifest and autosaves",
+        "Click chip body (not ×) plays a preview of that sound inline",
+        "Live highlight: when AgentEvent fires matching an event type while dialog is open, that event row briefly flashes (200ms highlight animation)",
+        "vue-tsc -b passes"
+      ],
+      "priority": 4,
+      "passes": false
+    },
+    {
+      "id": "US-007",
+      "title": "Drag sound from left column to event row",
+      "description": "As a user, I want to drag a sound file and drop it onto an event row to create an assignment.",
+      "acceptanceCriteria": [
+        "Sound rows in left column are draggable (HTML5 drag API or equivalent)",
+        "During drag: ghost chip (translucent copy of filename chip) follows cursor",
+        "During drag: valid drop targets (event rows) highlight on hover",
+        "Drop onto event row: adds (file, event) to manifest.assignments if not already present; autosaves",
+        "Drop on duplicate (same file already assigned to same event): silently ignored, no feedback",
+        "Drop outside valid target: no change",
+        "vue-tsc -b passes"
+      ],
+      "priority": 4,
+      "passes": false
+    },
+    {
+      "id": "US-008",
+      "title": "Drag chip from event row to re-assign to different sound",
+      "description": "As a user, I want to drag an assignment chip from an event row and drop it onto a different sound in the left column to re-assign it.",
+      "acceptanceCriteria": [
+        "Assignment chips in right column are draggable",
+        "During drag: ghost chip follows cursor; left column sound rows highlight as valid targets",
+        "Drop onto sound row: removes old (originalFile, event) assignment, adds (newFile, event) assignment; autosaves",
+        "Drop onto same sound row (no-op): silently ignored",
+        "Drop outside valid target: no change, assignment remains",
+        "vue-tsc -b passes"
+      ],
+      "priority": 5,
+      "passes": false
+    },
+    {
+      "id": "US-009",
+      "title": "Add audio files to pack — drag from Finder + file picker",
+      "description": "As a user, I want to add new audio files to a pack via drag-and-drop or file picker.",
+      "acceptanceCriteria": [
+        "Left column accepts file drag from OS (dragover + drop on column area)",
+        "Dropped audio files (wav/mp3/ogg/flac/m4a/webm) are copied to pack directory root",
+        "Dropped files are added to manifest.sounds with defaults: volume 1.0, enabled true",
+        "Manifest autosaved after file add",
+        "'Add file' button above left column opens Tauri file picker (dialog plugin); selected files go through same flow",
+        "Non-audio files dropped/selected are silently ignored or shown a brief error",
+        "vue-tsc -b passes"
+      ],
+      "priority": 5,
+      "passes": false
+    },
+    {
+      "id": "US-010",
+      "title": "Pack creation — immediate create with inline rename",
+      "description": "As a user, I want to create a new pack that appears immediately with an editable name.",
+      "acceptanceCriteria": [
+        "Clicking + in pack sidebar creates a pack directory with generated name ('New Pack', 'New Pack 2', etc.)",
+        "Empty manifest.json written to new pack directory immediately",
+        "Pack name field enters inline edit mode with cursor focused",
+        "Enter or blur confirms name; renames directory on disk",
+        "Escape cancels and deletes the newly created pack (since it's empty and user aborted naming)",
+        "vue-tsc -b passes"
+      ],
+      "priority": 5,
+      "passes": false
+    },
+    {
+      "id": "US-011",
+      "title": "ZIP import — manifest.json required",
+      "description": "As a user, I want to import sound packs from ZIP files that use the new manifest format.",
+      "acceptanceCriteria": [
+        "ZIP import reads manifest.json from pack root inside ZIP",
+        "If manifest.json is absent, import fails with error message: 'This ZIP does not contain a manifest.json. Please use the new pack format.'",
+        "Audio files are extracted to pack directory root (not into subdirectories)",
+        "manifest.json is written to pack directory",
+        "Pack appears in sidebar after import",
+        "vue-tsc -b passes"
+      ],
+      "priority": 6,
+      "passes": false
+    },
+    {
+      "id": "US-012",
+      "title": "Old pack migration — 'Migrate to new format' in context menu",
+      "description": "As a user, I want to migrate old folder-structured packs to the new manifest format without losing my configuration.",
+      "acceptanceCriteria": [
+        "Packs without manifest.json detected on scan; labeled with a migration indicator in the sidebar",
+        "Pack context menu shows 'Migrate to new format' option for old-style packs",
+        "Migration: reads all audio files from subdirectories, creates assignments from folder names (folder name → event type), moves files to pack root, writes manifest.json, removes old subdirectories",
+        "After migration, indicator removed and pack is fully functional in patchbay",
+        "vue-tsc -b passes"
+      ],
+      "priority": 6,
+      "passes": false
+    }
+  ]
+}
