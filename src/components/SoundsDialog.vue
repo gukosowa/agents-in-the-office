@@ -356,6 +356,10 @@ async function removeAssignment(
 const draggingSoundFile = ref<string | null>(null);
 const dragOverEventType = ref<AgentEventType | null>(null);
 
+// ---- Drag-and-drop: chip → sound row (re-assign) ----
+const draggingChip = ref<{ file: string; event: AgentEventType } | null>(null);
+const dragOverSoundFile = ref<string | null>(null);
+
 function onSoundDragStart(e: DragEvent, filename: string): void {
   draggingSoundFile.value = filename;
   if (e.dataTransfer) {
@@ -403,6 +407,58 @@ async function addAssignment(
   );
   if (alreadyExists) return;
   manifest.assignments.push({ file, event: eventType });
+  await soundStore.savePackManifest(selectedPack.value, manifest);
+}
+
+// ---- Chip drag handlers (re-assign chip to different sound) ----
+function onChipDragStart(
+  e: DragEvent,
+  file: string,
+  eventType: AgentEventType,
+): void {
+  draggingChip.value = { file, event: eventType };
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', file);
+  }
+}
+
+function onChipDragEnd(): void {
+  draggingChip.value = null;
+  dragOverSoundFile.value = null;
+}
+
+function onSoundRowDragOver(e: DragEvent, filename: string): void {
+  if (!draggingChip.value) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  dragOverSoundFile.value = filename;
+}
+
+function onSoundRowDragLeave(): void {
+  dragOverSoundFile.value = null;
+}
+
+async function onSoundRowDrop(
+  e: DragEvent,
+  newFile: string,
+): Promise<void> {
+  e.preventDefault();
+  dragOverSoundFile.value = null;
+  const chip = draggingChip.value;
+  draggingChip.value = null;
+  if (!chip || !selectedPack.value || !selectedPackInfo.value) return;
+  if (chip.file === newFile) return;
+  const manifest = selectedPackInfo.value.manifest;
+  manifest.assignments = manifest.assignments.filter(
+    (a) => !(a.file === chip.file && a.event === chip.event),
+  );
+  const alreadyExists = manifest.assignments.some(
+    (a) => a.file === newFile && a.event === chip.event,
+  );
+  if (!alreadyExists) {
+    manifest.assignments.push({ file: newFile, event: chip.event });
+  }
   await soundStore.savePackManifest(selectedPack.value, manifest);
 }
 
@@ -580,12 +636,19 @@ watch(selectedPack, async (packName) => {
                   v-else
                   :key="sound.file"
                   draggable="true"
-                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40 cursor-grab"
-                  :class="draggingSoundFile === sound.file ? 'opacity-50' : ''"
+                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40 cursor-grab transition-colors duration-150"
+                  :class="[
+                    draggingSoundFile === sound.file ? 'opacity-50' : '',
+                    dragOverSoundFile === sound.file ? 'bg-indigo-500/20' : '',
+                    draggingChip ? 'opacity-100' : '',
+                  ]"
                   @mouseenter="hoveredSoundFile = sound.file"
                   @mouseleave="hoveredSoundFile = null"
                   @dragstart="onSoundDragStart($event, sound.file)"
                   @dragend="onSoundDragEnd"
+                  @dragover="onSoundRowDragOver($event, sound.file)"
+                  @dragleave="onSoundRowDragLeave"
+                  @drop="onSoundRowDrop($event, sound.file)"
                 >
                   <!-- Play button -->
                   <button
@@ -690,9 +753,13 @@ watch(selectedPack, async (packName) => {
                     <span
                       v-for="file in assignmentsForEvent(eventType)"
                       :key="file"
-                      class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700/80 rounded text-xs text-gray-200 cursor-pointer hover:bg-gray-600/80"
+                      draggable="true"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-700/80 rounded text-xs text-gray-200 cursor-grab hover:bg-gray-600/80"
+                      :class="draggingChip?.file === file && draggingChip?.event === eventType ? 'opacity-50' : ''"
                       :title="file"
                       @click="playPreview(file)"
+                      @dragstart.stop="onChipDragStart($event, file, eventType)"
+                      @dragend="onChipDragEnd"
                     >
                       {{ truncateFilename(file) }}
                       <button
