@@ -66,6 +66,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (agentEventUnlisten) agentEventUnlisten();
   if (flashTimeout) clearTimeout(flashTimeout);
+  if (importErrorTimeout) clearTimeout(importErrorTimeout);
 });
 
 function isPackActive(packName: string): boolean {
@@ -214,27 +215,64 @@ async function cancelEditPackName(): Promise<void> {
 
 // ---- Import zip ----
 const dragOver = ref(false);
+const importError = ref<string | null>(null);
+let importErrorTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function showImportError(message: string): void {
+  importError.value = message;
+  if (importErrorTimeout) clearTimeout(importErrorTimeout);
+  importErrorTimeout = setTimeout(() => {
+    importError.value = null;
+    importErrorTimeout = null;
+  }, 5000);
+}
 
 async function importZipBytes(filename: string, bytes: Uint8Array): Promise<void> {
   const dotIdx = filename.lastIndexOf('.');
   const packName = dotIdx > 0 ? filename.slice(0, dotIdx) : filename;
-  const baseDir = soundStore.getSoundPacksDir();
-  const packPath = `${baseDir}/${packName}`;
 
   const zip = await JSZip.loadAsync(bytes);
-  for (const [relativePath, file] of Object.entries(zip.files)) {
-    if (file.dir) {
-      await mkdir(`${packPath}/${relativePath}`, { recursive: true });
-    } else {
-      const data = await file.async('uint8array');
-      const dirPart = relativePath.includes('/')
-        ? relativePath.slice(0, relativePath.lastIndexOf('/'))
-        : '';
-      if (dirPart) {
-        await mkdir(`${packPath}/${dirPart}`, { recursive: true });
-      }
-      await writeFile(`${packPath}/${relativePath}`, data);
+
+  // Find manifest.json — could be at root or inside a single top-level folder
+  let manifestFile = zip.file('manifest.json');
+  let stripPrefix = '';
+  if (!manifestFile) {
+    const topDirs = Object.keys(zip.files).filter(
+      (p) => p.endsWith('/') && !p.slice(0, -1).includes('/'),
+    );
+    if (topDirs.length === 1 && topDirs[0]) {
+      stripPrefix = topDirs[0];
+      manifestFile = zip.file(`${stripPrefix}manifest.json`);
     }
+  }
+
+  if (!manifestFile) {
+    showImportError(
+      'This ZIP does not contain a manifest.json. Please use the new pack format.',
+    );
+    return;
+  }
+
+  const baseDir = soundStore.getSoundPacksDir();
+  const packPath = `${baseDir}/${packName}`;
+  await mkdir(packPath, { recursive: true });
+
+  // Write manifest.json
+  const manifestData = await manifestFile.async('uint8array');
+  await writeFile(`${packPath}/manifest.json`, manifestData);
+
+  // Extract audio files to pack root (flat — no subdirectories)
+  for (const [relativePath, file] of Object.entries(zip.files)) {
+    if (file.dir) continue;
+    let effectivePath = relativePath;
+    if (stripPrefix && effectivePath.startsWith(stripPrefix)) {
+      effectivePath = effectivePath.slice(stripPrefix.length);
+    }
+    if (effectivePath === 'manifest.json') continue;
+    // Only extract files at the root level (no subdirectories)
+    if (effectivePath.includes('/')) continue;
+    const data = await file.async('uint8array');
+    await writeFile(`${packPath}/${effectivePath}`, data);
   }
 
   await soundStore.scanPacks();
@@ -659,6 +697,14 @@ watch(selectedPack, async (packName) => {
           class="absolute inset-0 z-[150] flex items-center justify-center bg-indigo-900/80 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none"
         >
           <span class="text-indigo-200 text-lg font-semibold">Drop sound pack here</span>
+        </div>
+
+        <!-- Import error toast -->
+        <div
+          v-if="importError"
+          class="absolute top-3 left-1/2 -translate-x-1/2 z-[160] px-4 py-2 bg-red-900/90 border border-red-500 rounded-lg text-red-200 text-sm max-w-md text-center shadow-lg"
+        >
+          {{ importError }}
         </div>
 
         <!-- Header -->
