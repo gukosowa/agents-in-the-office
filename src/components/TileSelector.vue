@@ -833,7 +833,21 @@ watch(() => editorStore.tileScrollHint, (hint) => {
     }
   });
 });
-watch(() => editorStore.selectedSelection, drawOverlay);
+watch(() => editorStore.selectedSelection, () => {
+  drawOverlay();
+  const sel = editorStore.selectedSelection;
+  if (!sel) return;
+  void nextTick(() => {
+    const container = scrollContainer.value;
+    if (!container) return;
+    const ts = mapStore.tileSize;
+    const scale = zoomScale.value;
+    const cx = (sel.x + sel.w / 2) * ts * scale;
+    const cy = (sel.y + sel.h / 2) * ts * scale;
+    container.scrollLeft = cx - container.clientWidth / 2;
+    container.scrollTop = cy - container.clientHeight / 2;
+  });
+});
 watch(panelMode, drawOverlay);
 watch(() => mapStore.tileDepthMaps, drawOverlay, { deep: true });
 watch(() => mapStore.tileCollisionMaps, drawOverlay, { deep: true });

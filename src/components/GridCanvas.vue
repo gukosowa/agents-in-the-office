@@ -345,6 +345,35 @@ const placeTilesOnMap = (
 };
 
 /**
+ * Returns a tileset selection rect if all cells in the stamp are regular tiles
+ * from the same slot and their tileset positions form a perfect contiguous
+ * rectangle matching the stamp layout. Returns null otherwise.
+ */
+const tryExtractTilesetRect = (
+  tiles: CellValue[][],
+  w: number,
+  h: number,
+): { x: number; y: number; w: number; h: number; slot: string } | null => {
+  const first = tiles[0]?.[0] ?? null;
+  if (!isRegularTile(first)) return null;
+  const slot = first.slot;
+  const baseX = first.x;
+  const baseY = first.y;
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      const cell = tiles[dy]?.[dx] ?? null;
+      if (
+        !isRegularTile(cell)
+        || cell.slot !== slot
+        || cell.x !== baseX + dx
+        || cell.y !== baseY + dy
+      ) return null;
+    }
+  }
+  return { x: baseX, y: baseY, w, h, slot };
+};
+
+/**
  * Right-click eyedropper: pick tile(s) from canvas.
  * Copies the actual CellValue grid so tiles from different
  * slots/autotiles are preserved exactly.
@@ -389,6 +418,11 @@ const pickTilesFromMap = (e: MouseEvent) => {
         }
       }
     }
+    // If all tiles form a perfect contiguous rectangle in the tileset,
+    // show the yellow selection marker in the tileset panel.
+    // Set this before pickedBrush so the sync watch fires while brush is still null.
+    const tilesetRect = tryExtractTilesetRect(tiles, w, h);
+    if (tilesetRect) editorStore.selectedSelection = tilesetRect;
     pickedBrush.value = tiles;
     editorStore.setTool('pen');
   } else {
