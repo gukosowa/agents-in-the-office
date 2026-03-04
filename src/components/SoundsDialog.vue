@@ -11,9 +11,11 @@ import {
   mkdir,
   readFile,
   writeFile,
+  exists,
 } from '@tauri-apps/plugin-fs';
 import JSZip from 'jszip';
 import { useSoundStore, AGENT_EVENT_TYPES } from '../stores/soundStore';
+import type { PackManifestSound } from '../stores/soundStore';
 import type { AgentEventType } from '../drivers/types';
 import PackContextMenu from './PackContextMenu.vue';
 
@@ -241,8 +243,78 @@ function hasAssignments(eventType: AgentEventType): boolean {
   return selectedPackInfo.value.manifest.assignments.some((a) => a.event === eventType);
 }
 
-// Reset scroll on pack change
-watch(selectedPack, async () => {
+// ---- Sound preview (left column) ----
+let previewSource: AudioBufferSourceNode | null = null;
+const previewFile = ref<string | null>(null);
+const soundFileExists = ref<Map<string, boolean>>(new Map());
+const hoveredSoundFile = ref<string | null>(null);
+
+async function checkSoundFileExistence(packName: string): Promise<void> {
+  const sounds = selectedPackInfo.value?.manifest.sounds ?? [];
+  const baseDir = soundStore.getSoundPacksDir();
+  const newMap = new Map<string, boolean>();
+  await Promise.all(
+    sounds.map(async (sound) => {
+      const filePath = `${baseDir}/${packName}/${sound.file}`;
+      const fileExists = await exists(filePath);
+      newMap.set(sound.file, fileExists);
+    }),
+  );
+  soundFileExists.value = newMap;
+}
+
+function stopPreview(): void {
+  if (previewSource) {
+    try { previewSource.stop(); } catch { /* already stopped */ }
+    previewSource = null;
+  }
+  previewFile.value = null;
+}
+
+async function playPreview(filename: string): Promise<void> {
+  if (!selectedPack.value) return;
+  stopPreview();
+  const baseDir = soundStore.getSoundPacksDir();
+  const filePath = `${baseDir}/${selectedPack.value}/${filename}`;
+  const buffer = await soundStore.loadBuffer(filePath);
+  if (!buffer) return;
+  const ctx = soundStore.getOrCreateAudioContext();
+  const sound = selectedPackInfo.value?.manifest.sounds.find((s) => s.file === filename);
+  const gainNode = ctx.createGain();
+  gainNode.gain.value =
+    soundStore.config.globalVolume * soundStore.effectiveVolume(selectedPack.value, filename, sound);
+  gainNode.connect(ctx.destination);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(gainNode);
+  previewFile.value = filename;
+  previewSource = source;
+  source.onended = () => {
+    if (previewFile.value === filename) {
+      previewFile.value = null;
+      previewSource = null;
+    }
+  };
+  source.start();
+}
+
+async function updateSoundVolume(sound: PackManifestSound, volume: number): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  sound.volume = volume;
+  await soundStore.savePackManifest(selectedPack.value, selectedPackInfo.value.manifest);
+}
+
+async function updateSoundEnabled(sound: PackManifestSound, enabled: boolean): Promise<void> {
+  if (!selectedPack.value || !selectedPackInfo.value) return;
+  sound.enabled = enabled;
+  await soundStore.savePackManifest(selectedPack.value, selectedPackInfo.value.manifest);
+}
+
+// Reset scroll + stop preview + check file existence on pack change
+watch(selectedPack, async (packName) => {
+  stopPreview();
+  soundFileExists.value = new Map();
+  if (packName) void checkSoundFileExistence(packName);
   await nextTick(() => {
     if (rightPanel.value) rightPanel.value.scrollTop = 0;
   });
@@ -387,7 +459,69 @@ watch(selectedPack, async () => {
                 >
                   Select a pack
                 </div>
-                <!-- US-005 will populate sound file list here -->
+                <div
+                  v-else-if="selectedPackInfo.manifest.sounds.length === 0"
+                  class="flex items-center justify-center h-full text-gray-600 text-sm"
+                >
+                  No sounds in this pack
+                </div>
+                <div
+                  v-for="sound in selectedPackInfo.manifest.sounds"
+                  v-else
+                  :key="sound.file"
+                  class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 hover:bg-gray-800/40"
+                  @mouseenter="hoveredSoundFile = sound.file"
+                  @mouseleave="hoveredSoundFile = null"
+                >
+                  <!-- Play button -->
+                  <button
+                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-white hover:bg-gray-700 text-xs"
+                    title="Play preview"
+                    @click="playPreview(sound.file)"
+                  >▶</button>
+
+                  <!-- Filename -->
+                  <span class="flex-1 text-xs font-mono text-gray-200 truncate min-w-0">{{ sound.file }}</span>
+
+                  <!-- Broken link indicator -->
+                  <span
+                    v-if="soundFileExists.get(sound.file) === false"
+                    class="shrink-0 text-red-400 text-xs"
+                    title="File not found on disk"
+                  >⚠</span>
+
+                  <!-- Volume slider (visible on hover) -->
+                  <input
+                    v-show="hoveredSoundFile === sound.file"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    :value="sound.volume"
+                    class="shrink-0 w-16 accent-indigo-400"
+                    title="Volume"
+                    @input="updateSoundVolume(sound, parseFloat(($event.target as HTMLInputElement).value))"
+                  />
+
+                  <!-- Enabled toggle -->
+                  <input
+                    type="checkbox"
+                    :checked="sound.enabled"
+                    class="shrink-0 w-4 h-4 accent-indigo-400 cursor-pointer"
+                    title="Enable/disable this sound"
+                    @change="updateSoundEnabled(sound, ($event.target as HTMLInputElement).checked)"
+                  />
+
+                  <!-- Stop button -->
+                  <button
+                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-xs"
+                    :class="previewFile === sound.file
+                      ? 'text-red-400 hover:text-red-300 hover:bg-gray-700'
+                      : 'text-gray-600 cursor-default'"
+                    title="Stop preview"
+                    @click="previewFile === sound.file ? stopPreview() : undefined"
+                  >■</button>
+                </div>
               </div>
             </div>
 
