@@ -6,11 +6,13 @@ import {
   onMounted,
   onUnmounted,
   nextTick,
+  onBeforeMount,
 } from 'vue';
 import { Trash2, Pencil, Plus, Copy, Dices } from 'lucide-vue-next';
 import SpritesheetCanvas from './SpritesheetCanvas.vue';
 import ActionPickerDialog from './ActionPickerDialog.vue';
 import { useCharacterStore } from '../stores/characterStore';
+import { useSoundStore } from '../stores/soundStore';
 import { generateFunnyName } from '../utils/nameGenerator';
 import type {
   SpriteLayoutType,
@@ -27,6 +29,15 @@ const emit = defineEmits<{
 }>();
 
 const characterStore = useCharacterStore();
+const soundStore = useSoundStore();
+const packsExpanded = ref(false);
+
+onBeforeMount(async () => {
+  if (soundStore.packs.length === 0) {
+    await soundStore.init();
+    await soundStore.scanPacks();
+  }
+});
 const duplicateFileInput = ref<HTMLInputElement | null>(null);
 
 const character = computed(
@@ -571,6 +582,49 @@ watch(
       />
       Sub-agent character
     </label>
+
+    <!-- Preferred sound packs -->
+    <div>
+      <button
+        class="flex items-center gap-1.5 text-sm font-medium text-gray-300 w-full text-left"
+        @click="packsExpanded = !packsExpanded"
+      >
+        <span class="text-gray-500 text-xs">{{ packsExpanded ? '▾' : '▸' }}</span>
+        Preferred Sound Packs
+        <span class="text-xs font-normal text-gray-500 ml-1">(empty = random any)</span>
+      </button>
+      <div v-if="packsExpanded" class="mt-1.5">
+        <div
+          v-if="soundStore.packs.length === 0"
+          class="text-xs text-gray-500 italic"
+        >
+          No sound packs found.
+        </div>
+        <div v-else class="flex flex-col gap-1">
+          <label
+            v-for="pack in soundStore.packs"
+            :key="pack.name"
+            class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              :checked="(character.preferredPacks ?? []).includes(pack.name)"
+              class="accent-blue-500"
+              @change="(e: Event) => {
+                const checked = (e.target as HTMLInputElement).checked;
+                const current = character?.preferredPacks ?? [];
+                characterStore.updateCharacter(characterId, {
+                  preferredPacks: checked
+                    ? [...current, pack.name]
+                    : current.filter(p => p !== pack.name),
+                });
+              }"
+            />
+            {{ pack.name }}
+          </label>
+        </div>
+      </div>
+    </div>
 
     <!-- Cell Size -->
     <div>

@@ -43,48 +43,14 @@ const volume = computed({
 // ---- Playback state ----
 type PlayState = 'stopped' | 'playing' | 'paused';
 const playState = ref<PlayState>('stopped');
-const currentTime = ref(0);
-const duration = ref(0);
 let buffer: AudioBuffer | null = null;
 let source: AudioBufferSourceNode | null = null;
 let gainNode: GainNode | null = null;
-let startOffset = 0;
-let startedAt = 0;
-let rafId: ReturnType<typeof requestAnimationFrame> | null = null;
-
-function formatTime(secs: number): string {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-const currentTimeDisplay = computed(() => formatTime(currentTime.value));
-const durationDisplay = computed(() => formatTime(duration.value));
-
-function tickRaf() {
-  if (playState.value !== 'playing' || !buffer) return;
-  const ctx = soundStore.getOrCreateAudioContext();
-  currentTime.value = Math.min(
-    startOffset + (ctx.currentTime - startedAt),
-    buffer.duration,
-  );
-  rafId = requestAnimationFrame(tickRaf);
-}
-
-function stopRaf() {
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId);
-    rafId = null;
-  }
-}
 
 async function loadBuffer(): Promise<AudioBuffer | null> {
   if (buffer) return buffer;
   const loaded = await soundStore.loadBuffer(props.filePath);
-  if (loaded) {
-    buffer = loaded;
-    duration.value = loaded.duration;
-  }
+  if (loaded) buffer = loaded;
   return buffer;
 }
 
@@ -106,9 +72,7 @@ async function play() {
   if (!buf) return;
 
   const ctx = soundStore.getOrCreateAudioContext();
-  if (ctx.state === 'suspended') {
-    await ctx.resume();
-  }
+  if (ctx.state === 'suspended') await ctx.resume();
 
   detachSource();
 
@@ -120,71 +84,23 @@ async function play() {
   source.buffer = buf;
   source.connect(gainNode);
   source.onended = () => {
-    if (playState.value === 'playing') {
-      playState.value = 'stopped';
-      currentTime.value = 0;
-      startOffset = 0;
-      stopRaf();
-    }
+    if (playState.value === 'playing') playState.value = 'stopped';
   };
 
-  startedAt = ctx.currentTime;
-  source.start(0, startOffset);
+  source.start(0, 0);
   playState.value = 'playing';
-  rafId = requestAnimationFrame(tickRaf);
 }
 
 async function pause() {
-  if (playState.value !== 'playing' || !buffer) return;
-  const ctx = soundStore.getOrCreateAudioContext();
-  startOffset = Math.min(
-    startOffset + (ctx.currentTime - startedAt),
-    buffer.duration,
-  );
-  stopRaf();
+  if (playState.value !== 'playing') return;
   detachSource();
   playState.value = 'paused';
 }
 
 function stop() {
-  stopRaf();
   detachSource();
   playState.value = 'stopped';
-  currentTime.value = 0;
-  startOffset = 0;
 }
-
-async function togglePlayPause() {
-  if (playState.value === 'playing') {
-    await pause();
-  } else {
-    await play();
-  }
-}
-
-async function seek(event: MouseEvent) {
-  const buf = await loadBuffer();
-  if (!buf) return;
-  const el = event.currentTarget as HTMLElement;
-  const rect = el.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-  const targetTime = ratio * buf.duration;
-
-  const wasPlaying = playState.value === 'playing';
-  startOffset = targetTime;
-  currentTime.value = targetTime;
-
-  if (wasPlaying) {
-    stopRaf();
-    detachSource();
-    await play();
-  }
-}
-
-const seekerPercent = computed(() => {
-  if (!buffer || buffer.duration === 0) return 0;
-  return (currentTime.value / buffer.duration) * 100;
-});
 
 const displayName = computed(() => {
   const name = props.filename;
@@ -202,47 +118,31 @@ onBeforeUnmount(() => {
     <input
       type="checkbox"
       :checked="enabled"
-      class="accent-indigo-400 cursor-pointer"
+      class="w-4 h-4 accent-indigo-400 cursor-pointer"
       @change="enabled = ($event.target as HTMLInputElement).checked"
     />
 
     <!-- Filename -->
-    <span class="w-32 truncate text-gray-300 shrink-0" :title="filename">{{ displayName }}</span>
+    <span class="flex-1 truncate text-gray-300 min-w-0" :title="filename">{{ displayName }}</span>
 
-    <!-- Play/Pause button -->
+    <!-- Play button (restarts if already playing) -->
     <button
       class="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-300"
-      :title="playState === 'playing' ? 'Pause' : 'Play'"
-      @click="togglePlayPause"
+      title="Play"
+      @click="play"
     >
-      <span v-if="playState === 'playing'">⏸</span>
-      <span v-else>▶</span>
+      ▶
     </button>
 
-    <!-- Stop button -->
+    <!-- Pause button -->
     <button
       class="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-300"
-      title="Stop"
-      @click="stop"
+      :class="playState !== 'playing' ? 'opacity-30' : ''"
+      title="Pause"
+      @click="pause"
     >
-      ⏹
+      ⏸
     </button>
-
-    <!-- Seeker bar -->
-    <div
-      class="flex-1 h-2 bg-gray-600 rounded cursor-pointer relative min-w-0"
-      @click="seek"
-    >
-      <div
-        class="h-full bg-indigo-400 rounded transition-none"
-        :style="{ width: `${seekerPercent}%` }"
-      />
-    </div>
-
-    <!-- Time display -->
-    <span class="w-20 text-center text-gray-400 shrink-0 tabular-nums">
-      {{ currentTimeDisplay }} / {{ durationDisplay }}
-    </span>
 
     <!-- Volume slider -->
     <input

@@ -200,6 +200,15 @@ export const useSoundStore = defineStore('sound', () => {
     return sessionPacks.get(sessionId);
   }
 
+  function assignSessionPack(sessionId: string, preferredPacks: string[]): void {
+    const pool = preferredPacks.length > 0 ? preferredPacks : config.value.activePacks;
+    if (pool.length === 0) return;
+    const chosen = pool[Math.floor(Math.random() * pool.length)];
+    if (chosen !== undefined) {
+      sessionPacks.set(sessionId, chosen);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // AudioContext helpers
   // -------------------------------------------------------------------------
@@ -327,5 +336,6 @@ export const useSoundStore = defineStore('sound', () => {
     getBufferCache,
     loadBuffer,
     getSessionPack,
+    assignSessionPack,
   };
 });

@@ -32,6 +32,7 @@ export interface SerializedCharacterDefinition {
   actions: ActionDefinition[];
   scale: number;
   isSubagent?: boolean;
+  preferredPacks?: string[];
 }
 
 interface AitoFile {
@@ -154,6 +155,7 @@ export async function serializeMapToJson(
         actions: def.actions,
         scale: def.scale,
         ...(def.isSubagent ? { isSubagent: true } : {}),
+        ...(def.preferredPacks?.length ? { preferredPacks: def.preferredPacks } : {}),
       });
     }
   }
@@ -299,6 +301,7 @@ export function deserializeMapFromJson(
       actions: s.actions,
       scale: s.scale ?? 1,
       isSubagent: s.isSubagent ?? false,
+      preferredPacks: s.preferredPacks ?? [],
     }));
   }
 

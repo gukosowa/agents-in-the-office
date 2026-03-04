@@ -24,4 +24,5 @@ export interface CharacterDefinition {
   actions: ActionDefinition[];
   scale: number;
   isSubagent?: boolean;
+  preferredPacks?: string[];
 }

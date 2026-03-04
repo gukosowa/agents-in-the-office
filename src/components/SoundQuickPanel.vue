@@ -57,7 +57,7 @@ function closeSettings() {
       <input
         type="checkbox"
         :checked="muted"
-        class="accent-indigo-400"
+        class="w-5 h-5 accent-indigo-400"
         @change="muted = ($event.target as HTMLInputElement).checked"
       />
       <span class="text-gray-300">Mute</span>

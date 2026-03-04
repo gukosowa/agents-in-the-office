@@ -35,6 +35,7 @@ import type {
 } from '../drivers/types';
 import AgentActivityPanel from '../components/AgentActivityPanel.vue';
 import SoundQuickPanel from '../components/SoundQuickPanel.vue';
+import { Volume2, VolumeX, Settings } from 'lucide-vue-next';
 import {
   initDebugLog,
   stopDebugLog,
@@ -585,6 +586,8 @@ const spawnAgentNpc = (sessionId: string): void => {
     agentDoor, 'external', subagentDef ?? undefined,
   );
   ch.debugSessionId = sessionId;
+  const spawnedDef = characterStore.getCharacter(ch.characterDefinitionId);
+  soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
   if (session?.parentSessionId) {
     ch.badge = '🐔';
     const parent = agentStore.sessions.get(session.parentSessionId);
@@ -2016,26 +2019,6 @@ onUnmounted(() => {
               : 'bg-gray-800/80 text-gray-400 border-gray-600 hover:bg-gray-700/80'"
             @click="toggleAlwaysOnTop"
           >Pin</button>
-          <!-- Sound quick panel toggle -->
-          <div class="relative">
-            <button
-              class="h-8 w-8 flex items-center justify-center text-sm rounded border transition-colors"
-              :class="soundStore.config.enabled
-                ? 'bg-gray-800/80 text-white border-gray-600 hover:bg-gray-700'
-                : 'bg-gray-800/80 text-gray-500 border-gray-600 hover:bg-gray-700'"
-              title="Sound settings"
-              @click="soundQuickPanelOpen = !soundQuickPanelOpen"
-            >🔊</button>
-            <div
-              v-if="soundQuickPanelOpen"
-              class="absolute top-10 right-0 z-[90]"
-            >
-              <SoundQuickPanel
-                :show-settings="soundSettingsOpen"
-                @update:show-settings="soundSettingsOpen = $event"
-              />
-            </div>
-          </div>
         </div>
         </Transition>
       </div>
@@ -2086,6 +2069,41 @@ onUnmounted(() => {
       :session-id="selectedSessionId"
       v-model:pinned="panelPinned"
     />
+    <!-- Floating sound button (bottom-right) -->
+    <div
+      class="absolute bottom-3 right-3 z-[80] flex flex-col items-end gap-1 group"
+    >
+      <!-- Panel (opened via settings button) -->
+      <div v-if="soundQuickPanelOpen" class="mb-1">
+        <SoundQuickPanel
+          :show-settings="soundSettingsOpen"
+          @update:show-settings="soundSettingsOpen = $event"
+        />
+      </div>
+      <!-- Settings button — appears on hover -->
+      <button
+        class="w-9 h-9 flex items-center justify-center rounded-full border transition-all shadow-md
+               opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0
+               bg-gray-800/90 text-gray-400 border-gray-600 hover:text-white hover:bg-gray-700"
+        title="Sound settings"
+        @click="soundQuickPanelOpen = !soundQuickPanelOpen"
+      >
+        <Settings :size="16" />
+      </button>
+      <!-- Speaker button — click to mute/unmute -->
+      <button
+        class="w-9 h-9 flex items-center justify-center rounded-full border transition-colors shadow-lg"
+        :class="soundStore.config.enabled
+          ? 'bg-gray-800/90 text-white border-gray-600 hover:bg-gray-700'
+          : 'bg-gray-800/90 text-gray-500 border-gray-600 hover:bg-gray-700'"
+        :title="soundStore.config.enabled ? 'Mute' : 'Unmute'"
+        @click="soundStore.config.enabled = !soundStore.config.enabled; void soundStore.saveConfig()"
+      >
+        <Volume2 v-if="soundStore.config.enabled" :size="16" />
+        <VolumeX v-else :size="16" />
+      </button>
+    </div>
+
     <Transition name="vignette">
       <div
         v-if="anyWaitingApproval"

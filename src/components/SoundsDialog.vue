@@ -226,6 +226,26 @@ const sortedCategories = computed(() => {
   return [...withFiles, ...empty];
 });
 
+function categoryAllEnabled(cat: string): boolean {
+  const files = selectedPackInfo.value?.categories[cat] ?? [];
+  if (files.length === 0) return false;
+  return files.every((filename) => {
+    const key = `${cat}/${filename}`;
+    return soundStore.getTrackConfig(selectedPack.value!, key).enabled;
+  });
+}
+
+function toggleCategoryEnabled(cat: string, val: boolean) {
+  const files = selectedPackInfo.value?.categories[cat] ?? [];
+  if (!selectedPack.value) return;
+  for (const filename of files) {
+    const key = `${cat}/${filename}`;
+    const cfg = soundStore.getTrackConfig(selectedPack.value, key);
+    soundStore.setTrackConfig(selectedPack.value, key, { ...cfg, enabled: val });
+  }
+  void soundStore.saveConfig();
+}
+
 function toggleCategory(cat: string) {
   if (expandedCategories.value.has(cat)) {
     expandedCategories.value.delete(cat);
@@ -317,7 +337,7 @@ watch(selectedPack, async () => {
             <input
               type="checkbox"
               :checked="globalEnabled"
-              class="accent-indigo-400"
+              class="w-4 h-4 accent-indigo-400"
               @change="globalEnabled = ($event.target as HTMLInputElement).checked"
             />
             Enable
@@ -372,7 +392,7 @@ watch(selectedPack, async () => {
                 <input
                   type="checkbox"
                   :checked="isPackActive(pack.name)"
-                  class="accent-indigo-400 cursor-pointer"
+                  class="w-4 h-4 accent-indigo-400 cursor-pointer"
                   @click.stop
                   @change="togglePackActive(pack.name, ($event.target as HTMLInputElement).checked)"
                 />
@@ -428,6 +448,14 @@ watch(selectedPack, async () => {
                   <span class="text-gray-400 text-xs w-3">
                     {{ expandedCategories.has(cat) ? '▾' : '▸' }}
                   </span>
+                  <input
+                    type="checkbox"
+                    class="w-4 h-4 accent-indigo-400 cursor-pointer"
+                    :checked="categoryAllEnabled(cat)"
+                    :disabled="(selectedPackInfo.categories[cat]?.length ?? 0) === 0"
+                    @click.stop
+                    @change="toggleCategoryEnabled(cat, ($event.target as HTMLInputElement).checked)"
+                  />
                   <span class="text-sm text-gray-300 font-mono flex-1">{{ cat }}</span>
                   <span
                     v-if="(selectedPackInfo.categories[cat]?.length ?? 0) > 0"
