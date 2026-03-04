@@ -17,7 +17,7 @@ import {
   saveMapToPath, AITO_FILE_PATH_KEY,
 } from "../utils/fileIO";
 import { invoke } from "@tauri-apps/api/core";
-import { onMounted, onUnmounted, ref, watch, toRaw, computed } from "vue";
+import { onMounted, onUnmounted, ref, watch, toRaw, computed, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { Maximize } from "lucide-vue-next";
 
@@ -191,9 +191,10 @@ const emptyCollision = (w: number, h: number) =>
   Array.from({ length: h }, () => Array(w).fill(false) as boolean[]);
 
 const handleNewMap = () => {
-  if (!confirm('Create a new map? Unsaved changes will be lost.')) {
-    return;
-  }
+  confirmNewMap();
+};
+
+const confirmNewMap = () => {
   mapStore.tileSize = DEFAULT_TILE_SIZE;
   mapStore.width = 20;
   mapStore.height = 15;
@@ -221,14 +222,21 @@ const handleNewMap = () => {
   mapStore.tileCollisionMaps = {};
   mapStore.tileInteractiveMaps = {};
   characterStore.setCharacters([]);
+  editorStore.resetEditorState();
   persistFilePath(null);
   mapStore.markDirty();
   undoStore.clear();
+  void nextTick(handleFitToView);
 };
 
 const rawCharacters = computed(() =>
   toRaw(characterStore.characters).map(c => toRaw(c)),
 );
+
+const markSaved = () => {
+  lastSavedVersion.value = mapStore.dirtyVersion
+    + characterStore.dirtyVersion;
+};
 
 const handleSave = async () => {
   if (savedFilePath.value) {
@@ -236,6 +244,7 @@ const handleSave = async () => {
       savedFilePath.value, getMapData(), getPoolBlobs(),
       getAutoTileEntries(), rawCharacters.value,
     );
+    markSaved();
     return;
   }
   await handleExport();
@@ -248,7 +257,10 @@ const handleExport = async () => {
     undefined,
     rawCharacters.value,
   );
-  if (path) persistFilePath(path);
+  if (path) {
+    persistFilePath(path);
+    markSaved();
+  }
 };
 
 const handleOpenFile = async () => {
@@ -263,6 +275,7 @@ const handleOpenFile = async () => {
   }
   persistFilePath(result.filePath);
   undoStore.clear();
+  void nextTick(handleFitToView);
 };
 
 // Debounced auto-save to file on changes
@@ -271,7 +284,12 @@ let autoSaveInterval: ReturnType<typeof setInterval> | null = null;
 const AUTO_SAVE_DELAY = 3000;
 const AUTO_SAVE_INTERVAL = 30_000;
 let autoSaveInFlight = false;
-let lastSavedVersion = 0;
+const lastSavedVersion = ref(0);
+
+const isDirty = computed(
+  () => mapStore.dirtyVersion + characterStore.dirtyVersion
+    !== lastSavedVersion.value,
+);
 
 async function autoSave() {
   if (!savedFilePath.value || autoSaveInFlight) return;
@@ -281,7 +299,7 @@ async function autoSave() {
       savedFilePath.value, getMapData(), getPoolBlobs(),
       getAutoTileEntries(), rawCharacters.value,
     );
-    lastSavedVersion = mapStore.dirtyVersion
+    lastSavedVersion.value = mapStore.dirtyVersion
       + characterStore.dirtyVersion;
   } finally {
     autoSaveInFlight = false;
@@ -304,6 +322,32 @@ watch(
 );
 
 const handleKeyDown = (e: KeyboardEvent) => {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    const digit = parseInt(e.key, 10);
+    if (!isNaN(digit) && digit >= 1) {
+      const layerIndex = digit - 1;
+      if (layerIndex < mapStore.layers.length) {
+        e.preventDefault();
+        if (editorStore.activeLayer === layerIndex) {
+          editorStore.setLayer(mapStore.layers.length);
+          editorStore.showInteractiveLayer = true;
+          editorStore.clearMultiSelections();
+          editorStore.setTool('pen');
+          editorStore.rectMode = false;
+          editorStore.lineMode = false;
+        } else {
+          editorStore.setLayer(layerIndex);
+          editorStore.showInteractiveLayer = false;
+        }
+        return;
+      }
+    }
+  }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === 'p') {
+    e.preventDefault();
+    editorStore.previewMode = !editorStore.previewMode;
+    return;
+  }
   if (!(e.ctrlKey || e.metaKey)) return;
   if (e.key === 's' && e.shiftKey) {
     e.preventDefault();
@@ -341,17 +385,40 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 };
 
-// Left sidebar (w-80 = 320px) + vertical toolbar (w-11 = 44px), header (h-10 = 40px)
-const SIDEBAR_WIDTH = 320 + 44;
+// vertical toolbar (w-11 = 44px), header (h-10 = 40px)
+const VERTICAL_TOOLBAR_WIDTH = 44;
 const HEADER_HEIGHT = 40;
+
+const SIDEBAR_MIN = 160;
+const sidebarWidth = ref(320);
+
+function onSidebarDragStart(e: PointerEvent) {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = sidebarWidth.value;
+  const onMove = (ev: PointerEvent) => {
+    const maxWidth = Math.floor(window.innerWidth * 0.8);
+    sidebarWidth.value = Math.max(
+      SIDEBAR_MIN,
+      Math.min(maxWidth, startWidth + ev.clientX - startX),
+    );
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
 
 const handleFitToView = () => {
   if (!canvasContainer.value) return;
-  const vw = canvasContainer.value.clientWidth - SIDEBAR_WIDTH;
+  const totalLeft = sidebarWidth.value + VERTICAL_TOOLBAR_WIDTH;
+  const vw = canvasContainer.value.clientWidth - totalLeft;
   const vh = canvasContainer.value.clientHeight - HEADER_HEIGHT;
   const mw = mapStore.width * mapStore.tileSize;
   const mh = mapStore.height * mapStore.tileSize;
-  editorStore.fitToView(vw, vh, mw, mh, SIDEBAR_WIDTH, HEADER_HEIGHT);
+  editorStore.fitToView(vw, vh, mw, mh, totalLeft, HEADER_HEIGHT);
 };
 
 onMounted(async () => {
@@ -361,7 +428,7 @@ onMounted(async () => {
   const combinedVersion = () =>
     mapStore.dirtyVersion + characterStore.dirtyVersion;
   autoSaveInterval = setInterval(() => {
-    if (combinedVersion() > lastSavedVersion) {
+    if (combinedVersion() > lastSavedVersion.value) {
       void autoSave();
     }
   }, AUTO_SAVE_INTERVAL);
@@ -386,6 +453,7 @@ onMounted(async () => {
         characterStore.setCharacters(result.characterDefinitions);
       }
       undoStore.clear();
+      void nextTick(handleFitToView);
     } catch (err) {
       console.error('[EditorView] file load failed:', err);
       persistFilePath(null);
@@ -417,7 +485,13 @@ onUnmounted(() => {
       <h1 data-tauri-drag-region class="text-sm font-bold whitespace-nowrap shrink-0">Agents in the Office</h1>
       <div data-tauri-drag-region class="flex-1 min-w-0 overflow-x-auto flex items-center gap-3 mx-3 scrollbar-hide">
         <div data-tauri-drag-region class="border-l border-gray-600 h-5 shrink-0"></div>
-        <Toolbar @new-map="handleNewMap" @save="handleSave" @export="handleExport" @open-file="handleOpenFile" />
+        <Toolbar
+          :is-dirty="isDirty"
+          @new-map="handleNewMap"
+          @save="handleSave"
+          @export="handleExport"
+          @open-file="handleOpenFile"
+        />
         <div class="ml-auto shrink-0 flex items-center gap-2">
           <button
             class="px-3 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-sm font-semibold whitespace-nowrap"
@@ -438,16 +512,30 @@ onUnmounted(() => {
 
     <!-- Left sidebar -->
     <div
-      class="absolute left-0 top-10 bottom-0 w-80 z-10
+      class="absolute left-0 top-10 bottom-0 z-10
              border-r border-gray-700/50 bg-gray-900/90
              flex flex-col overflow-hidden"
+      :style="{ width: sidebarWidth + 'px' }"
     >
       <TileSelector />
       <LayerControl />
+      <!-- Drag handle -->
+      <div
+        class="absolute top-0 right-0 bottom-0 w-1.5 cursor-col-resize
+               hover:bg-blue-500/50 active:bg-blue-500/80 transition-colors
+               flex items-center justify-center"
+        @pointerdown="onSidebarDragStart"
+      >
+        <div class="pointer-events-none flex flex-col gap-0.5 opacity-40">
+          <div class="w-0.5 h-1 bg-gray-300 rounded-full"></div>
+          <div class="w-0.5 h-1 bg-gray-300 rounded-full"></div>
+          <div class="w-0.5 h-1 bg-gray-300 rounded-full"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Vertical tool strip -->
-    <VerticalToolbar />
+    <VerticalToolbar :sidebar-width="sidebarWidth" />
 
     <ObjectDialog
       v-if="editorStore.dialogState.isOpen"

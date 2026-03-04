@@ -88,13 +88,14 @@ let rightDragStartY = 0;
 // Tiles picked from canvas via right-click (arbitrary layout)
 const pickedBrush = ref<CellValue[][] | null>(null);
 
-// Multi-tile draw: stamp full block on first click,
-// then paint individual tiles while dragging
 let isInitialPlacement = false;
 let multiTileAnchorX = 0;
 let multiTileAnchorY = 0;
+let multiTileLastSnapX = -1;
+let multiTileLastSnapY = -1;
 
-// Clear canvas-picked brush when palette selection changes
+// Clear canvas-picked brush when palette selection changes.
+// flush:'sync' ensures the watch runs before any subsequent pickedBrush assignment.
 watch(
   [
     () => editorStore.selectedTile,
@@ -102,6 +103,13 @@ watch(
     () => editorStore.selectedSelection,
   ],
   () => { pickedBrush.value = null; },
+  { flush: 'sync' },
+);
+
+// Clear canvas-picked brush when switching to the interactive object layer.
+watch(
+  () => editorStore.activeLayer >= mapStore.layers.length,
+  (isIO) => { if (isIO) pickedBrush.value = null; },
 );
 
 // Rectangle tool drag state
@@ -365,10 +373,11 @@ const pickTilesFromMap = (e: MouseEvent) => {
   const hasAny = tiles.some(row => row.some(cell => cell !== null));
 
   if (hasAny) {
-    pickedBrush.value = tiles;
+    // Null these first so the sync watch clears pickedBrush before we set it.
     editorStore.selectedTile = null;
     editorStore.selectedAutoTile = null;
     editorStore.selectedSelection = null;
+    pickedBrush.value = tiles;
     editorStore.setTool('pen');
   } else {
     pickedBrush.value = null;
@@ -420,11 +429,20 @@ const commitRectangle = (e: MouseEvent) => {
     );
   } else if (editorStore.selectedSelection) {
     const sel = editorStore.selectedSelection;
-    mapStore.fillRect(li, ox, oy, w, h, (dx, dy) => ({
-      x: sel.x + (dx % sel.w),
-      y: sel.y + (dy % sel.h),
-      slot: sel.slot,
-    }));
+    const fX = editorStore.tileFlipX;
+    const fY = editorStore.tileFlipY;
+    const rot = editorStore.tileRotation;
+    mapStore.fillRect(li, ox, oy, w, h, (dx, dy) => {
+      const { sx, sy } = selectionSourceCoord(
+        dx % sel.w, dy % sel.h,
+        sel.w, sel.h, fX, fY, rot,
+      );
+      return {
+        x: sel.x + sx, y: sel.y + sy,
+        slot: sel.slot,
+        flipX: fX, flipY: fY, rotation: rot,
+      };
+    });
   } else if (editorStore.selectedAutoTile) {
     const at = {
       autoTileIndex:
@@ -433,7 +451,12 @@ const commitRectangle = (e: MouseEvent) => {
     mapStore.fillRect(li, ox, oy, w, h, () => at);
   } else if (editorStore.selectedTile) {
     const tile = editorStore.selectedTile;
-    mapStore.fillRect(li, ox, oy, w, h, () => ({ ...tile }));
+    mapStore.fillRect(li, ox, oy, w, h, () => ({
+      ...tile,
+      flipX: editorStore.tileFlipX,
+      flipY: editorStore.tileFlipY,
+      rotation: editorStore.tileRotation,
+    }));
   }
 };
 
@@ -474,14 +497,20 @@ const commitLine = (e: MouseEvent) => {
     }
   } else if (editorStore.selectedSelection) {
     const sel = editorStore.selectedSelection;
+    const fX = editorStore.tileFlipX;
+    const fY = editorStore.tileFlipY;
+    const rot = editorStore.tileRotation;
+    const { ew, eh } = effectiveDims(sel.w, sel.h, rot);
     for (const p of points) {
       const adj = autoExpandForDraw(p.x, p.y);
-      const oX = ((adj.x - lineStartX) % sel.w + sel.w)
-        % sel.w;
-      const oY = ((adj.y - lineStartY) % sel.h + sel.h)
-        % sel.h;
+      const oX = ((adj.x - lineStartX) % ew + ew) % ew;
+      const oY = ((adj.y - lineStartY) % eh + eh) % eh;
+      const { sx, sy } = selectionSourceCoord(
+        oX, oY, sel.w, sel.h, fX, fY, rot,
+      );
       mapStore.setTile(li, adj.x, adj.y, {
-        x: sel.x + oX, y: sel.y + oY, slot: sel.slot,
+        x: sel.x + sx, y: sel.y + sy, slot: sel.slot,
+        flipX: fX, flipY: fY, rotation: rot,
       });
     }
   } else if (editorStore.selectedAutoTile) {
@@ -497,7 +526,12 @@ const commitLine = (e: MouseEvent) => {
     const tile = editorStore.selectedTile;
     for (const p of points) {
       const adj = autoExpandForDraw(p.x, p.y);
-      mapStore.setTile(li, adj.x, adj.y, { ...tile });
+      mapStore.setTile(li, adj.x, adj.y, {
+        ...tile,
+        flipX: editorStore.tileFlipX,
+        flipY: editorStore.tileFlipY,
+        rotation: editorStore.tileRotation,
+      });
     }
   }
 };
@@ -558,16 +592,22 @@ const drawRectPreviewTiles = (
     }
   } else if (editorStore.selectedSelection) {
     const sel = editorStore.selectedSelection;
+    const fX = editorStore.tileFlipX;
+    const fY = editorStore.tileFlipY;
+    const rot = editorStore.tileRotation;
     const img = mapStore.getSlotImage(sel.slot);
     if (img) {
       for (let dy = 0; dy < rh; dy++) {
         for (let dx = 0; dx < rw; dx++) {
-          ctx.drawImage(
-            img,
-            (sel.x + (dx % sel.w)) * ts,
-            (sel.y + (dy % sel.h)) * ts,
-            ts, ts,
+          const { sx, sy } = selectionSourceCoord(
+            dx % sel.w, dy % sel.h,
+            sel.w, sel.h, fX, fY, rot,
+          );
+          drawTileTransformed(
+            ctx, img,
+            (sel.x + sx) * ts, (sel.y + sy) * ts, ts, ts,
             (rx + dx) * ts, (ry + dy) * ts, ts, ts,
+            fX, fY, rot,
           );
         }
       }
@@ -595,10 +635,11 @@ const drawRectPreviewTiles = (
     if (img) {
       for (let dy = 0; dy < rh; dy++) {
         for (let dx = 0; dx < rw; dx++) {
-          ctx.drawImage(
-            img,
+          drawTileTransformed(
+            ctx, img,
             tile.x * ts, tile.y * ts, ts, ts,
             (rx + dx) * ts, (ry + dy) * ts, ts, ts,
+            editorStore.tileFlipX, editorStore.tileFlipY, editorStore.tileRotation,
           );
         }
       }
@@ -623,9 +664,10 @@ const render = () => {
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 0, cw, ch);
 
+  const dpr = window.devicePixelRatio;
   ctx.setTransform(
-    editorStore.zoom, 0, 0, editorStore.zoom,
-    Math.round(editorStore.panX), Math.round(editorStore.panY),
+    editorStore.zoom * dpr, 0, 0, editorStore.zoom * dpr,
+    Math.round(editorStore.panX * dpr), Math.round(editorStore.panY * dpr),
   );
   ctx.imageSmoothingEnabled = false;
 
@@ -762,14 +804,13 @@ const render = () => {
       const brush = pickedBrush.value;
       const bw = brush[0]?.length ?? 1;
       const bh = brush.length;
-      if (isDrawing.value) {
-        ctx.strokeStyle = hoverColor;
-        ctx.strokeRect(
-          hoverX.value * ts, hoverY.value * ts, ts, ts,
-        );
-      } else {
-        const sx = hoverX.value;
-        const sy = hoverY.value;
+      const sx = isDrawing.value
+        ? multiTileAnchorX + Math.floor((hoverX.value - multiTileAnchorX) / bw) * bw
+        : hoverX.value;
+      const sy = isDrawing.value
+        ? multiTileAnchorY + Math.floor((hoverY.value - multiTileAnchorY) / bh) * bh
+        : hoverY.value;
+      if (!isDrawing.value) {
         ctx.globalAlpha = 0.5;
         for (let dy = 0; dy < bh; dy++) {
           for (let dx = 0; dx < bw; dx++) {
@@ -803,9 +844,9 @@ const render = () => {
           }
         }
         ctx.globalAlpha = 1.0;
-        ctx.strokeStyle = hoverColor;
-        ctx.strokeRect(sx * ts, sy * ts, bw * ts, bh * ts);
       }
+      ctx.strokeStyle = hoverColor;
+      ctx.strokeRect(sx * ts, sy * ts, bw * ts, bh * ts);
     } else if (
       editorStore.selectedAutoTile
       && tool === 'pen'
@@ -833,30 +874,52 @@ const render = () => {
       && tool === 'pen'
     ) {
       const { x: tx, y: ty, w, h, slot } = editorStore.selectedSelection;
-      if (isDrawing.value) {
-        ctx.strokeStyle = hoverColor;
-        ctx.strokeRect(
-          hoverX.value * ts, hoverY.value * ts, ts, ts,
-        );
-      } else {
-        const sx = hoverX.value;
-        const sy = hoverY.value;
+      const fX = editorStore.tileFlipX;
+      const fY = editorStore.tileFlipY;
+      const rot = editorStore.tileRotation;
+      const { ew, eh } = effectiveDims(w, h, rot);
+      const sx = isDrawing.value
+        ? multiTileAnchorX + Math.floor((hoverX.value - multiTileAnchorX) / ew) * ew
+        : hoverX.value;
+      const sy = isDrawing.value
+        ? multiTileAnchorY + Math.floor((hoverY.value - multiTileAnchorY) / eh) * eh
+        : hoverY.value;
+      if (!isDrawing.value) {
         const hoverImg = mapStore.getSlotImage(slot);
         if (hoverImg) {
           ctx.globalAlpha = 0.5;
-          ctx.drawImage(
-            hoverImg,
-            tx * ts, ty * ts, w * ts, h * ts,
-            sx * ts, sy * ts, w * ts, h * ts,
-          );
+          for (let dy = 0; dy < eh; dy++) {
+            for (let dx = 0; dx < ew; dx++) {
+              const { sx: srcDx, sy: srcDy } =
+                selectionSourceCoord(dx, dy, w, h, fX, fY, rot);
+              drawTileTransformed(
+                ctx, hoverImg,
+                (tx + srcDx) * ts, (ty + srcDy) * ts, ts, ts,
+                (sx + dx) * ts, (sy + dy) * ts, ts, ts,
+                fX, fY, rot,
+              );
+            }
+          }
+          ctx.globalAlpha = 1.0;
         }
-        ctx.globalAlpha = 1.0;
-        ctx.strokeStyle = hoverColor;
-        ctx.strokeRect(
-          sx * ts, sy * ts,
-          w * ts, h * ts,
+      }
+      ctx.strokeStyle = hoverColor;
+      ctx.strokeRect(sx * ts, sy * ts, ew * ts, eh * ts);
+    } else if (editorStore.selectedTile && tool === 'pen') {
+      const tile = editorStore.selectedTile;
+      const img = mapStore.getSlotImage(tile.slot);
+      if (img && !isDrawing.value) {
+        ctx.globalAlpha = 0.5;
+        drawTileTransformed(
+          ctx, img,
+          tile.x * ts, tile.y * ts, ts, ts,
+          hoverX.value * ts, hoverY.value * ts, ts, ts,
+          editorStore.tileFlipX, editorStore.tileFlipY, editorStore.tileRotation,
         );
       }
+      ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = hoverColor;
+      ctx.strokeRect(hoverX.value * ts, hoverY.value * ts, ts, ts);
     } else {
       ctx.strokeStyle = hoverColor;
       ctx.strokeRect(
@@ -1175,6 +1238,59 @@ const drawAutoTileCell = (
   }
 };
 
+const drawTileTransformed = (
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  srcX: number, srcY: number, srcW: number, srcH: number,
+  dx: number, dy: number, dw: number, dh: number,
+  flipX: boolean, flipY: boolean, rotation: 0 | 90 | 180 | 270,
+) => {
+  if (!flipX && !flipY && rotation === 0) {
+    ctx.drawImage(img, srcX, srcY, srcW, srcH, dx, dy, dw, dh);
+    return;
+  }
+  ctx.save();
+  ctx.translate(dx + dw / 2, dy + dh / 2);
+  if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+  if (flipX) ctx.scale(-1, 1);
+  if (flipY) ctx.scale(1, -1);
+  ctx.drawImage(img, srcX, srcY, srcW, srcH, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
+};
+
+/**
+ * Map a destination cell (dx,dy) back to the source tile in
+ * the original selection, accounting for flip and rotation.
+ */
+const selectionSourceCoord = (
+  dx: number, dy: number,
+  w: number, h: number,
+  flipX: boolean, flipY: boolean,
+  rotation: 0 | 90 | 180 | 270,
+): { sx: number; sy: number } => {
+  let sx: number;
+  let sy: number;
+  switch (rotation) {
+    case 0: sx = dx; sy = dy; break;
+    case 90: sx = dy; sy = h - 1 - dx; break;
+    case 180: sx = w - 1 - dx; sy = h - 1 - dy; break;
+    case 270: sx = w - 1 - dy; sy = dx; break;
+  }
+  if (flipX) sx = w - 1 - sx;
+  if (flipY) sy = h - 1 - sy;
+  return { sx, sy };
+};
+
+/** Effective placement dimensions after rotation. */
+const effectiveDims = (
+  w: number, h: number,
+  rotation: 0 | 90 | 180 | 270,
+): { ew: number; eh: number } => {
+  return (rotation === 90 || rotation === 270)
+    ? { ew: h, eh: w }
+    : { ew: w, eh: h };
+};
+
 const drawLayerContent = (
   ctx: CanvasRenderingContext2D,
   layerIndex: number,
@@ -1195,11 +1311,15 @@ const drawLayerContent = (
       if (isRegularTile(cell)) {
         const img = mapStore.getSlotImage(cell.slot);
         if (img) {
-          ctx.drawImage(
-            img, cell.x * ts, cell.y * ts, ts, ts,
-            snap(x * ts), snap(y * ts),
-            snapSz(x * ts, (x + 1) * ts),
-            snapSz(y * ts, (y + 1) * ts),
+          const dx = snap(x * ts);
+          const dy = snap(y * ts);
+          const dw = snapSz(x * ts, (x + 1) * ts);
+          const dh = snapSz(y * ts, (y + 1) * ts);
+          drawTileTransformed(
+            ctx, img,
+            cell.x * ts, cell.y * ts, ts, ts,
+            dx, dy, dw, dh,
+            cell.flipX ?? false, cell.flipY ?? false, cell.rotation ?? 0,
           );
         }
       } else if (isAutoTile(cell)) {
@@ -1240,10 +1360,10 @@ const drawLayer = (
 
   const activeLayer = editorStore.activeLayer;
   const isActive = layerIndex === activeLayer;
-  const alpha = isActive ? 1.0
+  const alpha = editorStore.previewMode || isActive ? 1.0
     : layerIndex < activeLayer ? 0.4 : 0.3;
 
-  if (isActive) {
+  if (isActive || editorStore.previewMode) {
     ctx.save();
     ctx.globalAlpha = 1.0;
     ctx.filter = 'none';
@@ -1319,7 +1439,7 @@ const drawObjects = (
   const isActive = editorStore.activeLayer >= layerCount;
 
   ctx.save();
-  ctx.globalAlpha = isActive ? 1.0 : 0.3;
+  ctx.globalAlpha = isActive || editorStore.previewMode ? 1.0 : 0.3;
 
   for (const obj of rawObjects) {
     const px = obj.x * ts;
@@ -1590,6 +1710,9 @@ const handlePointerDown = (e: PointerEvent) => {
           editorStore.activeLayer,
           adj.x, adj.y,
           sel,
+          editorStore.tileFlipX,
+          editorStore.tileFlipY,
+          editorStore.tileRotation,
         );
       } else {
         let fillValue: CellValue = null;
@@ -1599,7 +1722,12 @@ const handlePointerDown = (e: PointerEvent) => {
               editorStore.selectedAutoTile.autoTileIndex,
           };
         } else if (editorStore.selectedTile) {
-          fillValue = { ...editorStore.selectedTile };
+          fillValue = {
+            ...editorStore.selectedTile,
+            flipX: editorStore.tileFlipX,
+            flipY: editorStore.tileFlipY,
+            rotation: editorStore.tileRotation,
+          };
         }
         mapStore.fillLayer(
           editorStore.activeLayer,
@@ -1797,41 +1925,60 @@ const handleDraw = (e: MouseEvent) => {
         isInitialPlacement = false;
         multiTileAnchorX = x;
         multiTileAnchorY = y;
-        const adj = autoExpandForDraw(x, y, bw, bh);
-        fillRectWithUndo(
-          li, adj.x, adj.y, bw, bh,
-          (dx, dy) => brush[dy]?.[dx] ?? null,
-        );
+        multiTileLastSnapX = x;
+        multiTileLastSnapY = y;
       } else {
-        const oX = ((x - multiTileAnchorX) % bw + bw) % bw;
-        const oY = ((y - multiTileAnchorY) % bh + bh) % bh;
-        const adj = autoExpandForDraw(x, y);
-        x = adj.x;
-        y = adj.y;
-        setTileWithUndo(li, x, y, brush[oY]?.[oX] ?? null);
+        const snapX = multiTileAnchorX
+          + Math.floor((x - multiTileAnchorX) / bw) * bw;
+        const snapY = multiTileAnchorY
+          + Math.floor((y - multiTileAnchorY) / bh) * bh;
+        if (snapX === multiTileLastSnapX && snapY === multiTileLastSnapY) return;
+        multiTileLastSnapX = snapX;
+        multiTileLastSnapY = snapY;
+        x = snapX;
+        y = snapY;
       }
+      const adj = autoExpandForDraw(x, y, bw, bh);
+      fillRectWithUndo(
+        li, adj.x, adj.y, bw, bh,
+        (dx, dy) => brush[dy]?.[dx] ?? null,
+      );
     } else if (editorStore.selectedSelection) {
       const { x: tx, y: ty, w, h, slot } = editorStore.selectedSelection;
+      const fX = editorStore.tileFlipX;
+      const fY = editorStore.tileFlipY;
+      const rot = editorStore.tileRotation;
+      const { ew, eh } = effectiveDims(w, h, rot);
       if (isInitialPlacement) {
         isInitialPlacement = false;
         multiTileAnchorX = x;
         multiTileAnchorY = y;
-        const adj = autoExpandForDraw(x, y, w, h);
-        fillRectWithUndo(
-          li, adj.x, adj.y, w, h,
-          (dx, dy) => ({ x: tx + dx, y: ty + dy, slot }),
-        );
+        multiTileLastSnapX = x;
+        multiTileLastSnapY = y;
       } else {
-        const oX = ((x - multiTileAnchorX) % w + w) % w;
-        const oY = ((y - multiTileAnchorY) % h + h) % h;
-        const adj = autoExpandForDraw(x, y);
-        x = adj.x;
-        y = adj.y;
-        setTileWithUndo(
-          li, x, y,
-          { x: tx + oX, y: ty + oY, slot },
-        );
+        const snapX = multiTileAnchorX
+          + Math.floor((x - multiTileAnchorX) / ew) * ew;
+        const snapY = multiTileAnchorY
+          + Math.floor((y - multiTileAnchorY) / eh) * eh;
+        if (snapX === multiTileLastSnapX && snapY === multiTileLastSnapY) return;
+        multiTileLastSnapX = snapX;
+        multiTileLastSnapY = snapY;
+        x = snapX;
+        y = snapY;
       }
+      const adj = autoExpandForDraw(x, y, ew, eh);
+      fillRectWithUndo(
+        li, adj.x, adj.y, ew, eh,
+        (dx, dy) => {
+          const { sx, sy } = selectionSourceCoord(
+            dx, dy, w, h, fX, fY, rot,
+          );
+          return {
+            x: tx + sx, y: ty + sy, slot,
+            flipX: fX, flipY: fY, rotation: rot,
+          };
+        },
+      );
     } else if (editorStore.selectedAutoTile) {
       const adj = autoExpandForDraw(x, y);
       x = adj.x;
@@ -1844,7 +1991,12 @@ const handleDraw = (e: MouseEvent) => {
       const adj = autoExpandForDraw(x, y);
       x = adj.x;
       y = adj.y;
-      setTileWithUndo(li, x, y, { ...editorStore.selectedTile });
+      setTileWithUndo(li, x, y, {
+        ...editorStore.selectedTile,
+        flipX: editorStore.tileFlipX,
+        flipY: editorStore.tileFlipY,
+        rotation: editorStore.tileRotation,
+      });
     }
   } else if (editorStore.selectedTool === 'eraser') {
     setTileWithUndo(li, x, y, null);
@@ -2032,6 +2184,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
   if (e.key === 'c' && !e.metaKey && !e.ctrlKey) {
     isCKeyHeld = true;
+    editorStore.setTool('pick');
     return;
   }
 
@@ -2053,7 +2206,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
         editorStore.rectMode = false;
         editorStore.lineMode = false;
         return;
-      case 'r':
+      case 'a':
         editorStore.rectMode = !editorStore.rectMode;
         editorStore.lineMode = false;
         if (
@@ -2064,7 +2217,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
           editorStore.setTool('pen');
         }
         return;
-      case 't':
+      case 's':
         editorStore.lineMode = !editorStore.lineMode;
         editorStore.rectMode = false;
         if (
@@ -2084,11 +2237,35 @@ const handleKeyDown = (e: KeyboardEvent) => {
       case 'g':
         editorStore.showGrid = !editorStore.showGrid;
         return;
+      case 'f':
+        editorStore.toggleFlipX();
+        return;
+      case 'v':
+        editorStore.toggleFlipY();
+        return;
+      case 'r':
+        editorStore.rotateTile();
+        return;
       default: break;
     }
   }
 
   // Selection shortcuts (select/move tools only)
+  if (e.key === 'Escape' && (
+    pickedBrush.value
+    || editorStore.selectedTile
+    || editorStore.selectedSelection
+    || editorStore.selectedAutoTile
+  )) {
+    pickedBrush.value = null;
+    editorStore.selectedTile = null;
+    editorStore.selectedSelection = null;
+    editorStore.selectedAutoTile = null;
+    editorStore.setTool('eraser');
+    e.preventDefault();
+    return;
+  }
+
   const currentTool = editorStore.selectedTool;
   if (currentTool !== 'select' && currentTool !== 'move') return;
 
@@ -2170,8 +2347,11 @@ const handleKeyUp = (e: KeyboardEvent) => {
 const resizeCanvas = () => {
   if (canvas.value && canvas.value.parentElement) {
     const parent = canvas.value.parentElement;
-    canvas.value.width = parent.clientWidth;
-    canvas.value.height = parent.clientHeight;
+    const dpr = window.devicePixelRatio;
+    canvas.value.width = Math.round(parent.clientWidth * dpr);
+    canvas.value.height = Math.round(parent.clientHeight * dpr);
+    canvas.value.style.width = parent.clientWidth + 'px';
+    canvas.value.style.height = parent.clientHeight + 'px';
   }
 };
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, onBeforeUnmount, nextTick } from 'vue';
 import { useMapStore } from '../stores/mapStore';
 import { useEditorStore } from '../stores/editorStore';
 import { useUndoStore } from '../stores/undoStore';
@@ -11,7 +11,8 @@ import {
 const editorStore = useEditorStore();
 const mapStore = useMapStore();
 const undoStore = useUndoStore();
-defineEmits(['new-map', 'save', 'export', 'open-file']);
+const emit = defineEmits(['new-map', 'save', 'export', 'open-file']);
+defineProps<{ isDirty?: boolean }>();
 
 const GRID_PRESETS = [16, 32, 48];
 const gridSizeOption = ref(String(mapStore.tileSize));
@@ -40,25 +41,84 @@ const onCustomGridSizeInput = (event: Event) => {
   customGridSize.value = clamped;
   mapStore.tileSize = clamped;
 };
+
+// --- Confirm popover ---
+const POPOVER_W = 224;
+const POPOVER_H = 104;
+const MARGIN = 8;
+
+const newMapBtnRef = ref<HTMLButtonElement | null>(null);
+const showConfirm = ref(false);
+const popoverStyle = ref({ top: '0px', left: '0px' });
+const placement = ref<'bottom' | 'top'>('bottom');
+
+function computePosition() {
+  if (!newMapBtnRef.value) return;
+  const r = newMapBtnRef.value.getBoundingClientRect();
+
+  const fitsBelow = r.bottom + MARGIN + POPOVER_H <= window.innerHeight;
+  placement.value = fitsBelow ? 'bottom' : 'top';
+
+  const top = fitsBelow
+    ? r.bottom + MARGIN
+    : r.top - MARGIN - POPOVER_H;
+
+  const idealLeft = r.left + r.width / 2 - POPOVER_W / 2;
+  const left = Math.max(MARGIN, Math.min(window.innerWidth - POPOVER_W - MARGIN, idealLeft));
+
+  popoverStyle.value = { top: `${Math.round(top)}px`, left: `${Math.round(left)}px` };
+}
+
+function openConfirm() {
+  showConfirm.value = true;
+  void nextTick(computePosition);
+}
+
+function closeConfirm() {
+  showConfirm.value = false;
+}
+
+function confirm() {
+  closeConfirm();
+  emit('new-map');
+}
+
+function onResize() {
+  if (showConfirm.value) computePosition();
+}
+
+watch(showConfirm, (open) => {
+  if (open) window.addEventListener('resize', onResize);
+  else window.removeEventListener('resize', onResize);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize);
+});
 </script>
 
 <template>
   <div class="flex gap-1.5 items-center">
     <button
-      class="p-1.5 rounded bg-blue-700 text-white
-             hover:bg-blue-600"
+      ref="newMapBtnRef"
+      class="p-1.5 rounded bg-blue-700 text-white hover:bg-blue-600"
       title="New Map (Cmd+N)"
-      @click="$emit('new-map')"
+      @click="openConfirm"
     >
       <FilePlus2 :size="18" />
     </button>
     <button
-      class="p-1.5 rounded bg-green-700 text-white
+      class="relative p-1.5 rounded bg-green-700 text-white
              hover:bg-green-600"
       title="Save to file (Cmd+S)"
       @click="$emit('save')"
     >
       <Save :size="18" />
+      <span
+        v-if="isDirty"
+        class="absolute top-0 right-0.5 text-[10px] leading-none
+               text-white font-bold pointer-events-none"
+      >*</span>
     </button>
     <button
       class="p-1.5 rounded bg-teal-700 text-white
@@ -104,9 +164,7 @@ const onCustomGridSizeInput = (event: Event) => {
 
     <div class="border-l border-gray-600 mx-1 h-5" />
 
-    <div
-      class="flex items-center gap-1.5 text-xs text-gray-300"
-    >
+    <div class="flex items-center gap-1.5 text-xs text-gray-300">
       <span>Grid:</span>
       <select
         :value="gridSizeOption"
@@ -152,7 +210,65 @@ const onCustomGridSizeInput = (event: Event) => {
         <Grid3x3 :size="14" />
       </button>
     </div>
-
   </div>
+
+  <!-- New-map confirm popover -->
+  <Teleport to="body">
+    <!-- Backdrop -->
+    <div
+      v-if="showConfirm"
+      class="fixed inset-0 z-[49] bg-black/50"
+      @mousedown="closeConfirm"
+    />
+    <Transition
+      :name="placement === 'bottom' ? 'pop-down' : 'pop-up'"
+    >
+      <div
+        v-if="showConfirm"
+        :style="popoverStyle"
+        class="fixed z-50 w-56 bg-gray-800 border border-gray-700
+               rounded-lg shadow-2xl p-4 space-y-3"
+      >
+        <p class="text-sm text-white font-semibold">Create a new map?</p>
+        <p class="text-xs text-gray-400">Unsaved changes will be lost.</p>
+        <div class="flex justify-end gap-2">
+          <button
+            class="px-3 py-1.5 text-xs rounded bg-gray-700
+                   text-gray-300 hover:bg-gray-600 transition-colors"
+            @click="closeConfirm"
+          >
+            Cancel
+          </button>
+          <button
+            class="px-3 py-1.5 text-xs rounded bg-red-600
+                   text-white hover:bg-red-500 transition-colors"
+            @click="confirm"
+          >
+            Create new
+          </button>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
+<style scoped>
+.pop-down-enter-active,
+.pop-down-leave-active,
+.pop-up-enter-active,
+.pop-up-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.pop-down-enter-from,
+.pop-down-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.pop-up-enter-from,
+.pop-up-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+</style>

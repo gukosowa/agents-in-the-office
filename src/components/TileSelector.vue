@@ -16,10 +16,99 @@ import AutoTilePropsDialog
 import AutoTileChooserDialog
   from '../components/AutoTileChooserDialog.vue';
 import ObjectDialog from '../components/ObjectDialog.vue';
+import TileSizeScaleDialog from '../components/TileSizeScaleDialog.vue';
 import { saveAutoTileToLibrary } from '../utils/db';
 
 const mapStore = useMapStore();
 const editorStore = useEditorStore();
+
+// ── Scale dialog state ────────────────────────────────────────
+const pendingTilesetFile = ref<{ file: File; slot: string } | null>(null);
+const pendingAutoTileBlob = ref<Blob | null>(null);
+const showScaleDialog = ref(false);
+const scaleDialogTarget = ref<'tileset' | 'autotile'>('tileset');
+
+async function scaleImageBlob(
+  blob: Blob,
+  sourceTileSize: number,
+  targetTileSize: number,
+  spacing: number,
+): Promise<Blob> {
+  if (sourceTileSize === targetTileSize && spacing === 0) return blob;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const stride = sourceTileSize + spacing;
+        const cols = Math.floor((img.width + spacing) / stride);
+        const rows = Math.floor((img.height + spacing) / stride);
+        const canvas = document.createElement('canvas');
+        canvas.width = cols * targetTileSize;
+        canvas.height = rows * targetTileSize;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject(new Error('no 2d context')); return; }
+        ctx.imageSmoothingEnabled = false;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            ctx.drawImage(
+              img,
+              c * stride, r * stride, sourceTileSize, sourceTileSize,
+              c * targetTileSize, r * targetTileSize,
+              targetTileSize, targetTileSize,
+            );
+          }
+        }
+        canvas.toBlob(
+          (b) => {
+            if (b) resolve(b);
+            else reject(new Error('toBlob returned null'));
+          },
+          'image/png',
+        );
+      };
+      img.onerror = reject;
+      img.src = reader.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function onScaleConfirm(sourceTileSize: number, spacing: number) {
+  showScaleDialog.value = false;
+  if (scaleDialogTarget.value === 'tileset' && pendingTilesetFile.value) {
+    const { file, slot } = pendingTilesetFile.value;
+    pendingTilesetFile.value = null;
+    const scaled = await scaleImageBlob(
+      file, sourceTileSize, mapStore.tileSize, spacing,
+    );
+    mapStore.setTilesetSlot(slot, scaled);
+  } else if (
+    scaleDialogTarget.value === 'autotile' && pendingAutoTileBlob.value
+  ) {
+    const blob = pendingAutoTileBlob.value;
+    pendingAutoTileBlob.value = null;
+    const scaled = await scaleImageBlob(
+      blob, sourceTileSize, mapStore.tileSize, spacing,
+    );
+    saveAutoTileToLibrary(scaled);
+    processAutoTileBlob(scaled);
+  }
+}
+
+function onScaleCancel() {
+  showScaleDialog.value = false;
+  pendingTilesetFile.value = null;
+  pendingAutoTileBlob.value = null;
+}
+
+const scaleDialogBlob = computed<Blob | null>(() => {
+  if (scaleDialogTarget.value === 'tileset') {
+    return pendingTilesetFile.value?.file ?? null;
+  }
+  return pendingAutoTileBlob.value;
+});
 
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 const isSelecting = ref(false);
@@ -101,15 +190,31 @@ function onTileIntCancel() {
 }
 
 // ── Zoom ─────────────────────────────────────────────────────
-const zoomMode = ref<'fit' | '100'>('fit');
+const zoomFit = ref(true);
+const zoomPercent = ref(100);
 const scrollContainer = ref<HTMLElement | null>(null);
 const containerWidth = ref(300);
 let resizeObserver: ResizeObserver | null = null;
 
+const ZOOM_STEP = 50;
+const ZOOM_MIN = 50;
+const ZOOM_MAX = 400;
+
+function zoomIn() {
+  zoomFit.value = false;
+  zoomPercent.value = Math.min(ZOOM_MAX, zoomPercent.value + ZOOM_STEP);
+}
+
+function zoomOut() {
+  zoomFit.value = false;
+  zoomPercent.value = Math.max(ZOOM_MIN, zoomPercent.value - ZOOM_STEP);
+}
+
 const zoomScale = computed(() => {
   const img = activeSlotImage.value;
-  if (!img || zoomMode.value === '100') return 1;
-  return containerWidth.value / img.width;
+  if (!img) return 1;
+  if (zoomFit.value) return containerWidth.value / img.width;
+  return zoomPercent.value / 100;
 });
 
 const isIOLayer = computed(
@@ -144,8 +249,10 @@ function openFilePickerForSlot(slot: string) {
 function handleFileUpload(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
-  mapStore.setTilesetSlot(editorStore.activeSlot, file);
   (event.target as HTMLInputElement).value = '';
+  pendingTilesetFile.value = { file, slot: editorStore.activeSlot };
+  scaleDialogTarget.value = 'tileset';
+  showScaleDialog.value = true;
 }
 
 function addSlot() {
@@ -190,7 +297,9 @@ const showChooser = ref(false);
 
 function onChooserSelect(blob: Blob) {
   showChooser.value = false;
-  processAutoTileBlob(blob);
+  pendingAutoTileBlob.value = blob;
+  scaleDialogTarget.value = 'autotile';
+  showScaleDialog.value = true;
 }
 
 function onChooserUpload() {
@@ -250,8 +359,9 @@ function handleAutoTileFilePicked(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
   (event.target as HTMLInputElement).value = '';
-  saveAutoTileToLibrary(file);
-  processAutoTileBlob(file);
+  pendingAutoTileBlob.value = file;
+  scaleDialogTarget.value = 'autotile';
+  showScaleDialog.value = true;
 }
 
 async function onPickerPick(
@@ -635,10 +745,44 @@ const updateSelection = (e: MouseEvent) => {
   drawOverlay();
 };
 
+function isSelectionTransparent(): boolean {
+  const img = activeSlotImage.value;
+  if (!img) return false;
+  const ts = mapStore.tileSize;
+  let sx: number, sy: number, sw: number, sh: number;
+  if (editorStore.selectedSelection) {
+    const sel = editorStore.selectedSelection;
+    sx = sel.x * ts; sy = sel.y * ts;
+    sw = sel.w * ts; sh = sel.h * ts;
+  } else if (editorStore.selectedTile) {
+    const tile = editorStore.selectedTile;
+    sx = tile.x * ts; sy = tile.y * ts;
+    sw = ts; sh = ts;
+  } else {
+    return false;
+  }
+  const offscreen = document.createElement('canvas');
+  offscreen.width = sw; offscreen.height = sh;
+  const ctx = offscreen.getContext('2d');
+  if (!ctx) return false;
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  const data = ctx.getImageData(0, 0, sw, sh).data;
+  for (let i = 3; i < data.length; i += 4) {
+    if ((data[i] ?? 0) > 0) return false;
+  }
+  return true;
+}
+
 const endSelection = () => {
   isSelecting.value = false;
   window.removeEventListener('mousemove', updateSelection);
   window.removeEventListener('mouseup', endSelection);
+  if (isSelectionTransparent()) {
+    editorStore.setTool('eraser');
+    editorStore.selectedTile = null;
+    editorStore.selectedSelection = null;
+    drawOverlay();
+  }
 };
 
 // ── Watchers ────────────────────────────────────────────────
@@ -833,20 +977,41 @@ onUnmounted(() => {
         <Zap :size="14" />
       </button>
       <div class="border-l border-gray-600 h-4 mx-1" />
-      <span class="text-xs text-gray-400 mr-1">Zoom</span>
       <button
-        v-for="mode in (['fit', '100'] as const)"
-        :key="mode"
         :class="[
           'px-2 py-0.5 text-xs rounded transition-colors',
-          zoomMode === mode
+          zoomFit
             ? 'bg-blue-600 text-white'
             : 'bg-gray-700 text-gray-300 hover:bg-gray-600',
         ]"
-        @click="zoomMode = mode"
-      >
-        {{ mode === 'fit' ? 'Fit' : '100%' }}
-      </button>
+        @click="zoomFit = true"
+      >Fit</button>
+      <button
+        :class="[
+          'px-2 py-0.5 text-xs rounded transition-colors',
+          !zoomFit && zoomPercent === 100
+            ? 'bg-blue-600 text-white'
+            : 'bg-gray-700 text-gray-300 hover:bg-gray-600',
+        ]"
+        @click="zoomFit = false; zoomPercent = 100"
+      >100%</button>
+      <button
+        class="px-1.5 py-0.5 text-xs rounded bg-gray-700
+               text-gray-300 hover:bg-gray-600 transition-colors
+               disabled:opacity-40 disabled:cursor-not-allowed"
+        :disabled="!zoomFit && zoomPercent <= ZOOM_MIN"
+        @click="zoomOut"
+      >−</button>
+      <span class="text-xs text-gray-300 w-9 text-center tabular-nums">
+        {{ zoomFit ? 'fit' : zoomPercent + '%' }}
+      </span>
+      <button
+        class="px-1.5 py-0.5 text-xs rounded bg-gray-700
+               text-gray-300 hover:bg-gray-600 transition-colors
+               disabled:opacity-40 disabled:cursor-not-allowed"
+        :disabled="!zoomFit && zoomPercent >= ZOOM_MAX"
+        @click="zoomIn"
+      >+</button>
     </div>
 
     <!-- Tileset slot tabs -->
@@ -892,8 +1057,8 @@ onUnmounted(() => {
           @load="onImageLoad"
           class="block max-w-none pointer-events-none"
           :style="{
-            width: activeSlotImage.width * zoomScale + 'px',
-            height: activeSlotImage.height * zoomScale + 'px',
+            width: Math.round(activeSlotImage.width * zoomScale) + 'px',
+            height: Math.round(activeSlotImage.height * zoomScale) + 'px',
             imageRendering: 'pixelated',
           }"
         />
@@ -902,11 +1067,12 @@ onUnmounted(() => {
           class="absolute top-0 left-0"
           :class="panelMode !== 'cursor' ? 'cursor-pointer' : 'cursor-crosshair'"
           :style="{
-            width: activeSlotImage.width * zoomScale + 'px',
-            height: activeSlotImage.height * zoomScale + 'px',
+            width: Math.round(activeSlotImage.width * zoomScale) + 'px',
+            height: Math.round(activeSlotImage.height * zoomScale) + 'px',
             imageRendering: 'pixelated',
           }"
           @mousedown="startSelection"
+          @contextmenu.prevent="startSelection"
         />
       </div>
       <div
@@ -931,6 +1097,15 @@ onUnmounted(() => {
       @select="onChooserSelect"
       @upload="onChooserUpload"
       @cancel="onChooserCancel"
+    />
+
+    <!-- Source tile size scale dialog -->
+    <TileSizeScaleDialog
+      v-if="showScaleDialog && scaleDialogBlob"
+      :map-tile-size="mapStore.tileSize"
+      :blob="scaleDialogBlob"
+      @confirm="onScaleConfirm"
+      @cancel="onScaleCancel"
     />
 
     <!-- Autotile picker dialog -->

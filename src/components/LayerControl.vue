@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue';
+import { nextTick, ref, onBeforeUnmount } from 'vue';
 import {
   Eye,
   EyeOff,
@@ -9,6 +9,7 @@ import {
   XCircle,
   ChevronDown,
   ChevronRight,
+  Clapperboard,
 } from 'lucide-vue-next';
 import { useEditorStore } from '../stores/editorStore';
 import { useMapStore } from '../stores/mapStore';
@@ -25,6 +26,48 @@ const collapsed = ref(false);
 const dragFromIndex = ref<number | null>(null);
 const dragOverIndex = ref<number | null>(null);
 
+// ── Anchored confirm popover ───────────────────────────────────
+
+const POPOVER_W = 210;
+const POPOVER_H = 94;
+const MARGIN = 8;
+
+const pendingConfirm = ref<{ message: string; onConfirm: () => void } | null>(null);
+const popoverStyle = ref({ top: '0px', left: '0px' });
+
+function computePos(rect: DOMRect) {
+  // Prefer right of button, fall back to left
+  let left = rect.right + MARGIN + POPOVER_W <= window.innerWidth
+    ? rect.right + MARGIN
+    : rect.left - MARGIN - POPOVER_W;
+  left = Math.max(MARGIN, Math.min(window.innerWidth - POPOVER_W - MARGIN, left));
+
+  // Center vertically on button, clamped
+  let top = rect.top + rect.height / 2 - POPOVER_H / 2;
+  top = Math.max(MARGIN, Math.min(window.innerHeight - POPOVER_H - MARGIN, top));
+
+  popoverStyle.value = { top: `${Math.round(top)}px`, left: `${Math.round(left)}px` };
+}
+
+function requestConfirm(message: string, anchor: HTMLElement, onConfirm: () => void) {
+  pendingConfirm.value = { message, onConfirm };
+  computePos(anchor.getBoundingClientRect());
+  window.addEventListener('resize', closeConfirm, { once: true });
+}
+
+function closeConfirm() {
+  pendingConfirm.value = null;
+}
+
+function confirmPending() {
+  pendingConfirm.value?.onConfirm();
+  pendingConfirm.value = null;
+}
+
+onBeforeUnmount(closeConfirm);
+
+// ── Layer actions ──────────────────────────────────────────────
+
 const interactiveLayerIndex = () => mapStore.layers.length;
 
 function handleAddLayer() {
@@ -40,37 +83,39 @@ function handleAddLayer() {
   editorStore.setLayer(newIdx);
 }
 
-function handleDeleteLayer(index: number) {
+function handleDeleteLayer(index: number, anchor: HTMLElement) {
   if (mapStore.layers.length <= 1) return;
-  if (!confirm('Delete this layer?')) return;
-  const layerData = mapStore.layers[index]!.map(
-    row => row.map(c => (c ? { ...c } : null)),
-  );
-  const meta = { ...mapStore.layerMeta[index]! };
-  mapStore.removeLayer(index);
-  undoStore.push({
-    label: 'Delete Layer',
-    patch: { kind: 'layerRemove', index, data: layerData, meta },
+  requestConfirm('Delete this layer?', anchor, () => {
+    const layerData = mapStore.layers[index]!.map(
+      row => row.map(c => (c ? { ...c } : null)),
+    );
+    const meta = { ...mapStore.layerMeta[index]! };
+    mapStore.removeLayer(index);
+    undoStore.push({
+      label: 'Delete Layer',
+      patch: { kind: 'layerRemove', index, data: layerData, meta },
+    });
+    if (editorStore.activeLayer >= mapStore.layers.length) {
+      editorStore.setLayer(mapStore.layers.length - 1);
+    }
   });
-  if (editorStore.activeLayer >= mapStore.layers.length) {
-    editorStore.setLayer(mapStore.layers.length - 1);
-  }
 }
 
-function handleClearLayer(index: number) {
+function handleClearLayer(index: number, anchor: HTMLElement) {
   const meta = mapStore.layerMeta[index];
   const name = meta?.name ?? `Layer ${index}`;
-  if (!confirm(`Clear all tiles from "${name}"?`)) return;
-  const snap = undoStore.captureSnapshot();
-  mapStore.clearLayer(index);
-  mapStore.shrinkMap();
-  undoStore.push({
-    label: 'Clear Layer',
-    patch: {
-      kind: 'snapshot',
-      before: snap,
-      after: undoStore.captureSnapshot(),
-    },
+  requestConfirm(`Clear all tiles from "${name}"?`, anchor, () => {
+    const snap = undoStore.captureSnapshot();
+    mapStore.clearLayer(index);
+    mapStore.shrinkMap();
+    undoStore.push({
+      label: 'Clear Layer',
+      patch: {
+        kind: 'snapshot',
+        before: snap,
+        after: undoStore.captureSnapshot(),
+      },
+    });
   });
 }
 
@@ -98,10 +143,7 @@ function handleDragStart(index: number) {
   dragFromIndex.value = index;
 }
 
-function handleDragOver(
-  e: DragEvent,
-  index: number,
-) {
+function handleDragOver(e: DragEvent, index: number) {
   e.preventDefault();
   dragOverIndex.value = index;
 }
@@ -116,11 +158,7 @@ function handleDrop(toIndex: number) {
     mapStore.moveLayer(fromIdx, toIndex);
     undoStore.push({
       label: 'Move Layer',
-      patch: {
-        kind: 'layerMove',
-        fromIndex: fromIdx,
-        toIndex,
-      },
+      patch: { kind: 'layerMove', fromIndex: fromIdx, toIndex },
     });
     if (wasActive) {
       editorStore.setLayer(toIndex);
@@ -144,7 +182,6 @@ function handleDragEnd() {
   dragFromIndex.value = null;
   dragOverIndex.value = null;
 }
-
 </script>
 
 <template>
@@ -157,15 +194,31 @@ function handleDragEnd() {
         <component :is="collapsed ? ChevronRight : ChevronDown" :size="12" />
         <h3 class="text-xs font-semibold uppercase">Layers</h3>
       </div>
-      <button
-        v-if="!collapsed"
-        class="p-1 rounded hover:bg-gray-600 text-gray-400
-               hover:text-white transition-colors"
-        title="Add layer"
-        @click.stop="handleAddLayer"
-      >
-        <Plus :size="14" />
-      </button>
+      <div v-if="!collapsed" class="flex items-center gap-1">
+        <button
+          :class="[
+            'p-1 rounded transition-colors',
+            editorStore.previewMode
+              ? 'bg-amber-500/30 text-amber-300 hover:bg-amber-500/50'
+              : 'text-gray-400 hover:bg-gray-600 hover:text-white',
+          ]"
+          title="Preview: render all layers at full opacity"
+          @click.stop="editorStore.previewMode = !editorStore.previewMode"
+        >
+          <span class="flex items-center gap-1 whitespace-nowrap">
+            <Clapperboard :size="14" />
+            <span class="text-xs">Preview</span>
+          </span>
+        </button>
+        <button
+          class="p-1 rounded hover:bg-gray-600 text-gray-400
+                 hover:text-white transition-colors"
+          title="Add layer"
+          @click.stop="handleAddLayer"
+        >
+          <Plus :size="14" />
+        </button>
+      </div>
     </div>
     <div v-if="!collapsed" class="flex flex-col gap-1 overflow-y-auto px-4 pb-3">
       <div
@@ -188,10 +241,7 @@ function handleDragEnd() {
         @drop="handleDrop(i)"
         @dragend="handleDragEnd"
       >
-        <GripVertical
-          :size="14"
-          class="shrink-0 text-gray-500 cursor-grab"
-        />
+        <GripVertical :size="14" class="shrink-0 text-gray-500 cursor-grab" />
         <span
           v-if="editingIndex !== i"
           class="flex-1 truncate select-none"
@@ -210,35 +260,25 @@ function handleDragEnd() {
           @click.stop
         />
         <button
-          class="p-0.5 rounded hover:bg-gray-500
-                 transition-colors shrink-0"
+          class="p-0.5 rounded hover:bg-gray-500 transition-colors shrink-0"
           :title="meta.visible ? 'Hide layer' : 'Show layer'"
           @click.stop="mapStore.toggleLayerVisibility(i)"
         >
-          <Eye
-            v-if="meta.visible"
-            :size="14"
-          />
-          <EyeOff
-            v-else
-            :size="14"
-            class="text-gray-500"
-          />
+          <Eye v-if="meta.visible" :size="14" />
+          <EyeOff v-else :size="14" class="text-gray-500" />
         </button>
         <button
-          class="p-0.5 rounded hover:bg-yellow-600
-                 transition-colors shrink-0"
+          class="p-0.5 rounded hover:bg-yellow-600 transition-colors shrink-0"
           title="Clear all tiles"
-          @click.stop="handleClearLayer(i)"
+          @click.stop="handleClearLayer(i, $event.currentTarget as HTMLElement)"
         >
           <XCircle :size="14" />
         </button>
         <button
           v-if="mapStore.layers.length > 1"
-          class="p-0.5 rounded hover:bg-red-600
-                 transition-colors shrink-0"
+          class="p-0.5 rounded hover:bg-red-600 transition-colors shrink-0"
           title="Delete layer"
-          @click.stop="handleDeleteLayer(i)"
+          @click.stop="handleDeleteLayer(i, $event.currentTarget as HTMLElement)"
         >
           <Trash2 :size="14" />
         </button>
@@ -278,18 +318,58 @@ function handleDragEnd() {
             @keydown.enter.stop="editorStore.showInteractiveLayer = !editorStore.showInteractiveLayer"
             @keydown.space.stop.prevent="editorStore.showInteractiveLayer = !editorStore.showInteractiveLayer"
           >
-            <Eye
-              v-if="editorStore.showInteractiveLayer"
-              :size="14"
-            />
-            <EyeOff
-              v-else
-              :size="14"
-              class="text-gray-400"
-            />
+            <Eye v-if="editorStore.showInteractiveLayer" :size="14" />
+            <EyeOff v-else :size="14" class="text-gray-400" />
           </span>
         </button>
       </div>
     </div>
   </div>
+
+  <!-- Anchored confirm popover -->
+  <Teleport to="body">
+    <div
+      v-if="pendingConfirm"
+      class="fixed inset-0 z-[49] bg-black/40"
+      @mousedown="closeConfirm"
+    />
+    <Transition name="pop">
+      <div
+        v-if="pendingConfirm"
+        :style="popoverStyle"
+        class="fixed z-50 bg-gray-800 border border-gray-700
+               rounded-lg shadow-2xl p-4 space-y-3"
+      >
+        <p class="text-sm text-white">{{ pendingConfirm.message }}</p>
+        <div class="flex justify-end gap-2">
+          <button
+            class="px-3 py-1.5 text-xs rounded bg-gray-700
+                   text-gray-300 hover:bg-gray-600 transition-colors"
+            @click="closeConfirm"
+          >
+            Cancel
+          </button>
+          <button
+            class="px-3 py-1.5 text-xs rounded bg-red-600
+                   text-white hover:bg-red-500 transition-colors"
+            @click="confirmPending"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
+
+<style scoped>
+.pop-enter-active,
+.pop-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: scale(0.95);
+}
+</style>

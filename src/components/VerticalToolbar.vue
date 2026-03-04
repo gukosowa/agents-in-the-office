@@ -6,8 +6,10 @@ import {
   Pen, Eraser, PaintBucket, Ban,
   RectangleHorizontal, Slash,
   Move, UserRound, Pipette,
+  FlipHorizontal2, FlipVertical2, RotateCw,
 } from 'lucide-vue-next';
 
+const props = defineProps<{ sidebarWidth?: number }>();
 const editorStore = useEditorStore();
 
 const drawTools: {
@@ -40,8 +42,9 @@ const lineApplicable = computed(
 
 <template>
   <div
-    class="absolute left-80 top-10 bottom-0 w-11 z-10 border-r border-gray-700/50 bg-gray-800/60 backdrop-blur-md
+    class="absolute top-10 bottom-0 w-11 z-10 border-r border-gray-700/50 bg-gray-800/60 backdrop-blur-md
            flex flex-col items-center py-2 gap-1 overflow-x-hidden overflow-y-auto"
+    :style="{ left: (props.sidebarWidth ?? 320) + 'px' }"
   >
     <!-- Draw tools -->
     <button
@@ -102,7 +105,7 @@ const lineApplicable = computed(
 
     <!-- Rectangle mode toggle -->
     <button
-      title="Rectangle mode (R)"
+      title="Rectangle mode (A)"
       :class="[
         editorStore.rectMode && rectApplicable
           ? 'bg-purple-600 text-white'
@@ -118,12 +121,12 @@ const lineApplicable = computed(
       "
     >
       <RectangleHorizontal :size="18" />
-      <span class="shortcut-badge">R</span>
+      <span class="shortcut-badge">A</span>
     </button>
 
     <!-- Line mode toggle -->
     <button
-      title="Line mode (T)"
+      title="Line mode (S)"
       :class="[
         editorStore.lineMode && lineApplicable
           ? 'bg-purple-600 text-white'
@@ -139,7 +142,50 @@ const lineApplicable = computed(
       "
     >
       <Slash :size="18" />
-      <span class="shortcut-badge">T</span>
+      <span class="shortcut-badge">S</span>
+    </button>
+
+    <div class="border-t border-gray-600 w-5 my-0.5" />
+
+    <!-- Tile transforms: flip X, flip Y, rotate 90 -->
+    <button
+      title="Flip Horizontal (F)"
+      :class="
+        editorStore.tileFlipX
+          ? 'bg-orange-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="editorStore.toggleFlipX()"
+    >
+      <FlipHorizontal2 :size="18" />
+      <span class="shortcut-badge">F</span>
+    </button>
+    <button
+      title="Flip Vertical (V)"
+      :class="
+        editorStore.tileFlipY
+          ? 'bg-orange-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="editorStore.toggleFlipY()"
+    >
+      <FlipVertical2 :size="18" />
+      <span class="shortcut-badge">V</span>
+    </button>
+    <button
+      title="Rotate 90° CW (R)"
+      :class="
+        editorStore.tileRotation !== 0
+          ? 'bg-orange-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+      "
+      class="relative p-1.5 rounded transition-colors"
+      @click="editorStore.rotateTile()"
+    >
+      <RotateCw :size="18" />
+      <span class="shortcut-badge">R</span>
     </button>
 
     <div class="border-t border-gray-600 w-5 my-0.5" />

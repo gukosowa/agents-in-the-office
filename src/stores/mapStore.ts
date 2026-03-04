@@ -599,6 +599,9 @@ export const useMapStore = defineStore('map', () => {
     x: number,
     y: number,
     pattern: { x: number; y: number; w: number; h: number; slot: string },
+    flipX = false,
+    flipY = false,
+    rotation: 0 | 90 | 180 | 270 = 0,
   ) {
     if (layerIndex >= layers.value.length) return;
     const rawLayers = toRaw(layers.value);
@@ -614,14 +617,33 @@ export const useMapStore = defineStore('map', () => {
       layer, x, y, width.value, height.value,
     );
 
+    const pw = pattern.w;
+    const ph = pattern.h;
+    const swapped = rotation === 90 || rotation === 270;
+    const ew = swapped ? ph : pw;
+    const eh = swapped ? pw : ph;
+
     for (const cell of cells) {
       if (!layer[cell.y]) continue;
-      const dx = ((cell.x - x) % pattern.w + pattern.w) % pattern.w;
-      const dy = ((cell.y - y) % pattern.h + pattern.h) % pattern.h;
+      const dx = ((cell.x - x) % ew + ew) % ew;
+      const dy = ((cell.y - y) % eh + eh) % eh;
+      let sx: number;
+      let sy: number;
+      switch (rotation) {
+        case 0: sx = dx; sy = dy; break;
+        case 90: sx = dy; sy = ph - 1 - dx; break;
+        case 180: sx = pw - 1 - dx; sy = ph - 1 - dy; break;
+        case 270: sx = pw - 1 - dy; sy = dx; break;
+      }
+      if (flipX) sx = pw - 1 - sx;
+      if (flipY) sy = ph - 1 - sy;
       layer[cell.y]![cell.x] = {
-        x: pattern.x + dx,
-        y: pattern.y + dy,
+        x: pattern.x + sx,
+        y: pattern.y + sy,
         slot: pattern.slot,
+        flipX: flipX || undefined,
+        flipY: flipY || undefined,
+        rotation: rotation || undefined,
       };
     }
     autoTileCache.clear();

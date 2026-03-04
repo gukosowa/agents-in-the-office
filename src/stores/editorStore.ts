@@ -30,9 +30,13 @@ export const useEditorStore = defineStore('editor', () => {
   const isDrawing = ref(false);
   const rectMode = ref(false);
   const lineMode = ref(false);
+  const tileFlipX = ref(false);
+  const tileFlipY = ref(false);
+  const tileRotation = ref<0 | 90 | 180 | 270>(0);
   const showCollision = ref(false);
   const showGrid = ref(true);
   const showInteractiveLayer = ref(false);
+  const previewMode = ref(false);
 
   /** Rectangle selected on the map canvas (grid coords) */
   const mapSelection = ref<{
@@ -74,23 +78,32 @@ export const useEditorStore = defineStore('editor', () => {
     selectedTile.value = tile;
     selectedSelection.value = null;
     selectedAutoTile.value = null;
+    if (selectedTool.value === 'eraser') selectedTool.value = 'pen';
   }
 
   function setSelectedSelection(rect: {x: number, y: number, w: number, h: number, slot: string}) {
     selectedSelection.value = rect;
     selectedTile.value = null;
     selectedAutoTile.value = null;
+    if (selectedTool.value === 'eraser') selectedTool.value = 'pen';
   }
 
   function setSelectedAutoTile(autoTile: AutoTile) {
     selectedAutoTile.value = autoTile;
     selectedTile.value = null;
     selectedSelection.value = null;
+    if (selectedTool.value === 'eraser') selectedTool.value = 'pen';
   }
 
   function clearMultiSelections() {
     selectedSelection.value = null;
     selectedAutoTile.value = null;
+  }
+
+  function toggleFlipX() { tileFlipX.value = !tileFlipX.value; }
+  function toggleFlipY() { tileFlipY.value = !tileFlipY.value; }
+  function rotateTile() {
+    tileRotation.value = ((tileRotation.value + 90) % 360) as 0 | 90 | 180 | 270;
   }
 
   function setZoom(
@@ -123,6 +136,24 @@ export const useEditorStore = defineStore('editor', () => {
     mapSelection.value = null;
   }
 
+  function resetEditorState() {
+    selectedTool.value = 'pen';
+    rectMode.value = false;
+    lineMode.value = false;
+    tileFlipX.value = false;
+    tileFlipY.value = false;
+    tileRotation.value = 0;
+    mapSelection.value = null;
+    showCollision.value = false;
+    showInteractiveLayer.value = false;
+    clipboard.value = null;
+    selectedTile.value = null;
+    selectedSelection.value = null;
+    selectedAutoTile.value = null;
+    activeLayer.value = 0;
+    activeSlot.value = 'A';
+  }
+
   function fitToView(
     viewWidth: number,
     viewHeight: number,
@@ -152,6 +183,7 @@ export const useEditorStore = defineStore('editor', () => {
     showCollision,
     showGrid,
     showInteractiveLayer,
+    previewMode,
     zoom,
     panX,
     panY,
@@ -159,6 +191,9 @@ export const useEditorStore = defineStore('editor', () => {
     isDrawing,
     rectMode,
     lineMode,
+    tileFlipX,
+    tileFlipY,
+    tileRotation,
     mapSelection,
     clipboard,
     openDialog,
@@ -169,8 +204,12 @@ export const useEditorStore = defineStore('editor', () => {
     setSelectedSelection,
     setSelectedAutoTile,
     clearMultiSelections,
+    toggleFlipX,
+    toggleFlipY,
+    rotateTile,
     setMapSelection,
     clearMapSelection,
+    resetEditorState,
     setZoom,
     setPan,
     fitToView,

@@ -4,6 +4,9 @@ export interface Tile {
   x: number;
   y: number;
   slot: string;
+  flipX?: boolean;
+  flipY?: boolean;
+  rotation?: 0 | 90 | 180 | 270;
 }
 
 export interface AutoTile {
