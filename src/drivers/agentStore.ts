@@ -22,6 +22,7 @@ import {
   getSessionEvents,
   pruneSessionEvents,
 } from '../utils/db';
+import { useSoundStore } from '../stores/soundStore';
 
 const ACTIVITY_LOG_MAX = 100;
 
@@ -258,6 +259,7 @@ export const useAgentStore = defineStore('agent', () => {
     const { sessionId } = event;
 
     void persistEvent(event);
+    void useSoundStore().playForEvent(event);
 
     if (event.type === 'session_start') {
       debugLog(
