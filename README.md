@@ -60,6 +60,8 @@ Agent events are persisted to IndexedDB so activity logs survive app restarts an
 
 📦 **Shareable maps** — maps are saved as `.aito` files: all tile data, tilesets, and autotiles encoded as base64. Send one file to share a complete map.
 
+🔊 **Sound packs** — assign a folder of audio files as a sound pack per agent session. Tracks play automatically on agent events (tool calls, prompts, turn ends). Manage packs from the editor (rename, duplicate, delete via right-click); switch or mute from a quick panel in run mode. A 🔊 overlay fades in on the NPC whenever a sound plays.
+
 📋 **Activity log** — floating panel showing a scrollable history of agent actions, persisted in IndexedDB across restarts.
 
 🪟 **Compact window** — can be pinned and sized small, ideal for placing in a corner of a secondary monitor.
