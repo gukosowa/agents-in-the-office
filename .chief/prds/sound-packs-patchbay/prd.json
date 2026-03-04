@@ -27,7 +27,7 @@
         "vue-tsc -b passes"
       ],
       "priority": 1,
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",
@@ -41,7 +41,8 @@
         "vue-tsc -b passes"
       ],
       "priority": 2,
-      "passes": false
+      "passes": false,
+      "inProgress": true
     },
     {
       "id": "US-004",

@@ -680,11 +680,8 @@ const drawOverlay = () => {
     ctx.restore();
   };
 
-  if (isColMode) {
+  if (isColMode || isDirColMode) {
     drawColMarkers(1.0);
-    drawDirColMarkers(0.25);
-  } else if (isDirColMode) {
-    drawColMarkers(0.25);
     drawDirColMarkers(0.6);
   }
 

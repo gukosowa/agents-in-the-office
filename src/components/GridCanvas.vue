@@ -788,21 +788,8 @@ const render = () => {
   ctx.globalAlpha = 1.0;
   ctx.filter = 'none';
 
-  if (editorStore.showCollision) {
+  if (editorStore.showCollision || editorStore.showDirCollision) {
     drawCollisionOverlay(ctx, rawCollisionGrid, ts);
-    ctx.save();
-    ctx.globalAlpha = 0.25;
-    drawDirCollisionOverlay(
-      ctx, mapStore.getEffectiveDirCollisionGrid(), ts,
-    );
-    ctx.restore();
-  }
-
-  if (editorStore.showDirCollision) {
-    ctx.save();
-    ctx.globalAlpha = 0.25;
-    drawCollisionOverlay(ctx, rawCollisionGrid, ts);
-    ctx.restore();
     drawDirCollisionOverlay(
       ctx, mapStore.getEffectiveDirCollisionGrid(), ts,
     );
