@@ -448,6 +448,29 @@ function toggleEventVisibility(eventType: AgentEventType): void {
   void soundStore.saveConfig();
 }
 
+function getEventVolume(eventType: AgentEventType): number {
+  return Math.round((soundStore.config.eventVolumes[eventType] ?? 1.0) * 100);
+}
+
+function setEventVolume(eventType: AgentEventType, percent: number): void {
+  soundStore.config.eventVolumes[eventType] = percent / 100;
+  void soundStore.saveConfig();
+}
+
+function isEventSoundEnabled(eventType: AgentEventType): boolean {
+  return !soundStore.config.disabledEvents.includes(eventType);
+}
+
+function toggleEventSoundEnabled(eventType: AgentEventType): void {
+  const idx = soundStore.config.disabledEvents.indexOf(eventType);
+  if (idx >= 0) {
+    soundStore.config.disabledEvents.splice(idx, 1);
+  } else {
+    soundStore.config.disabledEvents.push(eventType);
+  }
+  void soundStore.saveConfig();
+}
+
 // ---- Patchbay data ----
 const selectedPackInfo = computed(() =>
   soundStore.packs.find((p) => p.name === selectedPack.value) ?? null,
@@ -1218,7 +1241,28 @@ watch(selectedPack, async (packName) => {
                   ]"
                 >
                   <div class="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      :checked="isEventSoundEnabled(eventType)"
+                      class="shrink-0 accent-indigo-400 cursor-pointer"
+                      title="Enable/disable sound for this event"
+                      @change="toggleEventSoundEnabled(eventType)"
+                    />
                     <span class="text-sm font-mono text-gray-300 flex-1">{{ eventType }}</span>
+                    <!-- Event volume slider -->
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      :value="getEventVolume(eventType)"
+                      class="w-16 h-1 accent-indigo-400 cursor-pointer shrink-0"
+                      title="Event volume"
+                      @input="setEventVolume(eventType, +($event.target as HTMLInputElement).value)"
+                    />
+                    <span class="text-xs text-gray-400 w-7 text-right shrink-0 tabular-nums">
+                      {{ getEventVolume(eventType) }}%
+                    </span>
                     <!-- Info icon + popover -->
                     <span
                       v-if="EVENT_DESCRIPTIONS[eventType]"

@@ -48,6 +48,10 @@ export interface SoundConfig {
   soundOverrides: Record<string, { volume: number; enabled: boolean }>;
   /** Event types hidden from the patchbay UI */
   hiddenEvents: string[];
+  /** Event types with sounds disabled (still visible in UI, but no sound plays) */
+  disabledEvents: string[];
+  /** Per-event-type volume multiplier, key: AgentEventType string, value: 0.0–1.0 */
+  eventVolumes: Record<string, number>;
   /** Legacy field — read for migration only, not written on save */
   tracks?: Record<string, Record<string, TrackConfig>>;
 }
@@ -93,6 +97,8 @@ const DEFAULT_CONFIG: SoundConfig = {
   activePacks: [],
   soundOverrides: {},
   hiddenEvents: [...DEFAULT_HIDDEN_EVENTS],
+  disabledEvents: [],
+  eventVolumes: {},
 };
 
 function migrateTracksToSoundOverrides(
@@ -405,6 +411,7 @@ export const useSoundStore = defineStore('sound', () => {
   async function playForEvent(event: AgentEvent): Promise<void> {
     if (!config.value.enabled) return;
     if (config.value.hiddenEvents.includes(event.type)) return;
+    if (config.value.disabledEvents.includes(event.type)) return;
 
     // Auto-assign a pack on first event if none was assigned yet
     if (!sessionPacks.has(event.sessionId) && config.value.activePacks.length > 0) {
@@ -461,6 +468,7 @@ export const useSoundStore = defineStore('sound', () => {
 
     const manifestSound = manifestSoundMap.get(chosenFile);
     const vol = effectiveVolume(packName, chosenFile, manifestSound);
+    const eventVol = config.value.eventVolumes[event.type] ?? 1.0;
 
     playing = true;
     cooldownMap.set(category, now);
@@ -469,7 +477,7 @@ export const useSoundStore = defineStore('sound', () => {
     try {
       await invoke('play_sound', {
         path: filePath,
-        volume: config.value.globalVolume * vol,
+        volume: config.value.globalVolume * eventVol * vol,
       });
     } catch (err) {
       console.warn(`[soundStore] play_sound failed:`, err);
