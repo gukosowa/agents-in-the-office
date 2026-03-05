@@ -381,6 +381,7 @@ export const useSoundStore = defineStore('sound', () => {
   }
 
   function assignSessionPack(sessionId: string, preferredPacks: string[]): void {
+    if (sessionPacks.has(sessionId)) return; // pack is fixed for the session's lifetime
     const pool = preferredPacks.length > 0 ? preferredPacks : config.value.activePacks;
     if (pool.length === 0) return;
     const chosen = pool[Math.floor(Math.random() * pool.length)];
@@ -397,15 +398,12 @@ export const useSoundStore = defineStore('sound', () => {
     if (!config.value.enabled) return;
     if (config.value.hiddenEvents.includes(event.type)) return;
 
-    // Session pack assignment on session_start
-    if (event.type === 'session_start') {
-      const { activePacks } = config.value;
-      if (activePacks.length > 0) {
-        const randomIdx = Math.floor(Math.random() * activePacks.length);
-        const chosen = activePacks[randomIdx];
-        if (chosen !== undefined) {
-          sessionPacks.set(event.sessionId, chosen);
-        }
+    // Auto-assign a pack on first event if none was assigned yet
+    if (!sessionPacks.has(event.sessionId) && config.value.activePacks.length > 0) {
+      const pool = config.value.activePacks;
+      const chosen = pool[Math.floor(Math.random() * pool.length)];
+      if (chosen !== undefined) {
+        sessionPacks.set(event.sessionId, chosen);
       }
     }
 

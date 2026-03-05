@@ -43,6 +43,7 @@ import {
 } from '../utils/debugLog';
 import { useCharacterStore } from '../stores/characterStore';
 import { useSoundStore } from '../stores/soundStore';
+import { useEmojiStore } from '../stores/emojiStore';
 
 const router = useRouter();
 const mapStore = useMapStore();
@@ -50,7 +51,9 @@ const localeStore = useLocaleStore();
 const agentStore = useAgentStore();
 const characterStore = useCharacterStore();
 const soundStore = useSoundStore();
+const emojiStore = useEmojiStore();
 const controlsExpanded = ref(false);
+const controlsRef = ref<HTMLElement | null>(null);
 const soundQuickPanelOpen = ref(false);
 const soundSettingsOpen = ref(false);
 let controlsCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -134,6 +137,7 @@ const activeAgentSessions = computed(() => {
     name: string;
     status: AgentStatus;
     dismissing: boolean;
+    startedAt: number;
   }[] = [];
   for (const [sid, sess] of agentStore.sessions) {
     if (sess.parentSessionId) continue;
@@ -143,9 +147,10 @@ const activeAgentSessions = computed(() => {
       name: sess.nameTag ?? `Agent ${sid.slice(0, 6)}`,
       status: sess.status,
       dismissing: sess.dismissing,
+      startedAt: sess.startedAt,
     });
   }
-  return entries;
+  return entries.sort((a, b) => a.startedAt - b.startedAt);
 });
 
 function selectAgent(sessionId: string) {
@@ -156,6 +161,17 @@ function selectAgent(sessionId: string) {
     const ch = characters.find(c => c.id === npcId);
     if (ch && ch.state !== 'exited') followTarget = ch;
   }
+}
+
+function zoomToNpc(sessionId: string) {
+  const npcId = findNpcForSession(sessionId);
+  if (!npcId) return;
+  const ch = characters.find(c => c.id === npcId);
+  if (!ch || ch.state === 'exited') return;
+  followTarget = ch;
+  startupPanTarget = null;
+  zoomTarget = null;
+  followZoomTarget = Math.max(1.5, camZoom);
 }
 
 function cycleAgent(delta: number) {
@@ -263,6 +279,7 @@ const STARTUP_PAN_DELAY_MS = 800;
 let startupPanDelay = 0;
 
 let zoomTarget: number | null = null;
+let followZoomTarget: number | null = null;
 let zoomPivotSX = 0;
 let zoomPivotSY = 0;
 let zoomPivotWX = 0;
@@ -307,6 +324,7 @@ const handleWheel = (e: WheelEvent) => {
   followTarget = null;
   startupPanTarget = null;
   zoomTarget = null;
+  followZoomTarget = null;
 
   const dx = normalizeWheelDelta(e.deltaX, e.deltaMode);
   const dy = normalizeWheelDelta(e.deltaY, e.deltaMode);
@@ -369,6 +387,7 @@ const handlePointerMove = (e: PointerEvent) => {
     followTarget = null;
     startupPanTarget = null;
     zoomTarget = null;
+    followZoomTarget = null;
   }
   if (dragMoved) {
     camPanX += e.movementX;
@@ -409,6 +428,7 @@ const zoomAroundCenter = (factor: number) => {
   zoomTarget = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, camZoom * factor));
   followTarget = null;
   startupPanTarget = null;
+  followZoomTarget = null;
 };
 
 const handleDoubleClick = (e: MouseEvent) => {
@@ -594,16 +614,19 @@ const spawnAgentNpc = (sessionId: string): void => {
     } else {
       soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
     }
+    emojiStore.assignSessionEmoji(sessionId, session.parentSessionId);
     ch.badge = '🐔';
     const parent = agentStore.sessions.get(session.parentSessionId);
     const parentName = parent?.nameTag ?? 'Agent';
     ch.nameTag = subagentNameTag(parentName);
   } else {
     soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
+    emojiStore.assignSessionEmoji(sessionId);
     if (session?.nameTag) {
       ch.nameTag = session.nameTag;
     }
   }
+  ch.sessionEmoji = emojiStore.getSessionEmoji(sessionId);
   ch.enqueueCommand({ type: 'wander' });
   const handle = createNpcHandle(ch, sessionId);
   externalNpcSessions.set(ch.id, sessionId);
@@ -896,6 +919,7 @@ const update = (time: number) => {
             }
             agentStore.removeSession(sessionId);
           }
+          emojiStore.removeSessionEmoji(sessionId);
           externalNpcSessions.delete(ch.id);
         }
       }
@@ -995,13 +1019,24 @@ const update = (time: number) => {
 
     const targetWorldX = (followTarget.x + camLookaheadX) * ts + ts / 2;
     const targetWorldY = (followTarget.y + camLookaheadY) * ts + ts / 2;
+    // Use final zoom for goal pan so the target doesn't shift while zoom animates
+    const goalZoom = followZoomTarget ?? camZoom;
     const goalPanX =
-      canvas.value.width / 2 - targetWorldX * camZoom;
+      canvas.value.width / 2 - targetWorldX * goalZoom;
     const goalPanY =
-      canvas.value.height / 2 - targetWorldY * camZoom + ts * camZoom * 1.0;
+      canvas.value.height / 2 - targetWorldY * goalZoom + ts * goalZoom * 1.0;
     const t = 1 - Math.exp(-CAM_LERP_SPEED * dt / 1000);
     camPanX += (goalPanX - camPanX) * t;
     camPanY += (goalPanY - camPanY) * t;
+
+    if (followZoomTarget !== null) {
+      const zt = 1 - Math.exp(-ZOOM_LERP_SPEED * dt / 1000);
+      camZoom += (followZoomTarget - camZoom) * zt;
+      if (Math.abs(followZoomTarget - camZoom) < 0.001) {
+        camZoom = followZoomTarget;
+        followZoomTarget = null;
+      }
+    }
   }
 
   for (const [npcId, sid] of externalNpcSessions) {
@@ -1229,6 +1264,25 @@ const render = () => {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ctx.fillText(ch.badge, screenX + ts / 2, badgeY);
+      ctx.restore();
+    }
+
+    if (ch.sessionEmoji) {
+      const r = 9;
+      const cx = screenX - r + 2;
+      const cy = destY + r + 1 + Math.sin(now * 2.5) * 3;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'black';
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.font = `11px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ch.sessionEmoji, cx, cy);
       ctx.restore();
     }
 
@@ -1988,7 +2042,22 @@ onMounted(async () => {
   });
 });
 
+function handleDocumentClick(e: MouseEvent) {
+  if (controlsExpanded.value && controlsRef.value && !controlsRef.value.contains(e.target as Node)) {
+    controlsExpanded.value = false;
+    if (controlsCloseTimer) {
+      clearTimeout(controlsCloseTimer);
+      controlsCloseTimer = null;
+    }
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', handleDocumentClick);
+});
+
 onUnmounted(() => {
+  document.removeEventListener('mousedown', handleDocumentClick);
   saveCamera();
   cancelAnimationFrame(animationId);
   canvas.value?.removeEventListener('wheel', handleWheel);
@@ -2014,6 +2083,7 @@ onUnmounted(() => {
     ></canvas>
     <div class="absolute top-12 left-4 z-50 flex flex-col items-start gap-1">
       <div
+        ref="controlsRef"
         class="flex items-center gap-2"
         @mouseenter="openControls"
         @mouseleave="scheduleCloseControls"
@@ -2024,7 +2094,7 @@ onUnmounted(() => {
           style="filter: drop-shadow(0 1px 3px rgba(0,0,0,0.9));"
         >›</button>
         <Transition name="slide-controls">
-          <div v-if="controlsExpanded" class="flex items-center gap-1.5">
+          <div v-if="controlsExpanded" class="flex flex-wrap items-center gap-1.5 max-w-[calc(100vw-4rem)]">
           <router-link
             to="/"
             class="h-8 px-3 flex items-center bg-gray-800/80 text-white text-sm rounded border border-gray-600 hover:bg-gray-700 transition-colors whitespace-nowrap"
@@ -2094,6 +2164,7 @@ onUnmounted(() => {
             ? 'text-white'
             : 'text-gray-500 hover:text-gray-300'"
           @click="selectAgent(agent.sessionId)"
+          @dblclick="zoomToNpc(agent.sessionId)"
         >{{ agent.name }}</button>
         <button
           v-if="agent.status === 'idle' && !agent.dismissing"

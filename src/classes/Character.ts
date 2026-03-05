@@ -135,6 +135,7 @@ export class Character {
   } | null = null;
   waitingForApproval = false;
   badge: string | undefined = undefined;
+  sessionEmoji: string | undefined = undefined;
   nameTag: string | null = null;
   soundIndicatorTimer = 0;
   renderScale = 1;
