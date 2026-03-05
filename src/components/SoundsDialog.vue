@@ -10,7 +10,7 @@ import {
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import {
   mkdir,
   readFile,
@@ -332,6 +332,44 @@ async function onDrop(e: DragEvent) {
   } catch (err) {
     console.error('[SoundsDialog] drop import failed', err);
   }
+}
+
+// ---- Export zip ----
+async function exportAllSounds(): Promise<void> {
+  const packs = soundStore.packs;
+  if (packs.length === 0) return;
+
+  const zip = new JSZip();
+  const baseDir = soundStore.getSoundPacksDir();
+
+  for (const pack of packs) {
+    const packPath = `${baseDir}/${pack.name}`;
+
+    const manifestBytes = await readFile(`${packPath}/manifest.json`);
+    zip.file(`${pack.name}/manifest.json`, manifestBytes);
+
+    for (const [category, files] of Object.entries(pack.categories)) {
+      for (const filename of files) {
+        const filePath = `${packPath}/${category}/${filename}`;
+        try {
+          const fileBytes = await readFile(filePath);
+          zip.file(`${pack.name}/${category}/${filename}`, fileBytes);
+        } catch {
+          // skip missing files
+        }
+      }
+    }
+  }
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+
+  const savePath = await save({
+    defaultPath: 'sounds.zip',
+    filters: [{ name: 'ZIP', extensions: ['zip'] }],
+  });
+  if (!savePath) return;
+
+  await writeFile(savePath, zipBytes);
 }
 
 // ---- Event descriptions ----
@@ -1013,25 +1051,34 @@ watch(selectedPack, async (packName) => {
               </div>
             </div>
             <!-- Buttons -->
-            <div class="flex gap-1 p-2 border-t border-gray-700">
+            <div class="flex flex-col gap-1 p-2 border-t border-gray-700">
               <button
-                class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                class="w-full px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
                 @click="startCreatePack"
               >
                 New Pack
               </button>
-              <button
-                class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
-                @click="openImportPicker"
-              >
-                Import
-              </button>
-              <button
-                v-if="selectedPack"
-                class="px-2 py-1 bg-gray-700/60 rounded hover:bg-red-900/60 text-gray-400 hover:text-red-400"
-                title="Delete pack"
-                @click="confirmDeletePack = selectedPack"
-              ><Trash2 :size="14" /></button>
+              <div class="flex gap-1">
+                <button
+                  class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                  :disabled="soundStore.packs.length === 0"
+                  @click="exportAllSounds"
+                >
+                  Export
+                </button>
+                <button
+                  class="flex-1 px-2 py-1 bg-gray-700/60 rounded hover:bg-gray-600/70 text-xs text-gray-200"
+                  @click="openImportPicker"
+                >
+                  Import
+                </button>
+                <button
+                  v-if="selectedPack"
+                  class="px-2 py-1 bg-gray-700/60 rounded hover:bg-red-900/60 text-gray-400 hover:text-red-400"
+                  title="Delete pack"
+                  @click="confirmDeletePack = selectedPack"
+                ><Trash2 :size="14" /></button>
+              </div>
             </div>
           </div>
 
