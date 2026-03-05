@@ -22,7 +22,7 @@ import { subTileToPixels } from '../utils/rmxpAutoTile';
 import { subTileToPixelsB, wallSubTileToPixels } from '../utils/vxAutoTile';
 import type { WallVariants } from '../utils/vxAutoTile';
 import type { AutoTileType } from '../stores/mapStore';
-import { pruneOldEvents } from '../utils/db';
+import { pruneOldEvents, saveSessionMetadata, getSessionMetadata } from '../utils/db';
 import { loadMapFromPath, AITO_FILE_PATH_KEY } from '../utils/fileIO';
 import { invoke } from '@tauri-apps/api/core';
 import { createFallbackDefinitions } from '../utils/spriteLoader';
@@ -591,7 +591,7 @@ const removeOrphanedNpc = (sessionId: string): void => {
   }
 };
 
-const spawnAgentNpc = (sessionId: string): void => {
+const spawnAgentNpc = async (sessionId: string): Promise<void> => {
   removeOrphanedNpc(sessionId);
   const doors = getDoors();
   const agentDoors = doors.filter(o => o.type === 'door_agent');
@@ -599,15 +599,11 @@ const spawnAgentNpc = (sessionId: string): void => {
   const agentDoor = pool[Math.floor(Math.random() * pool.length)];
   if (!agentDoor) return;
   const session = agentStore.sessions.get(sessionId);
-  const subagentDef = session?.parentSessionId
-    ? pickSubagentDefinition()
-    : undefined;
-  const ch = spawnFromDoor(
-    agentDoor, 'external', subagentDef ?? undefined,
-  );
-  ch.debugSessionId = sessionId;
-  const spawnedDef = characterStore.getCharacter(ch.characterDefinitionId);
   if (session?.parentSessionId) {
+    const subagentDef = pickSubagentDefinition();
+    const ch = spawnFromDoor(agentDoor, 'external', subagentDef ?? undefined);
+    ch.debugSessionId = sessionId;
+    const spawnedDef = characterStore.getCharacter(ch.characterDefinitionId);
     const parentPack = soundStore.getSessionPack(session.parentSessionId);
     if (parentPack) {
       soundStore.assignSessionPack(sessionId, [parentPack]);
@@ -619,25 +615,45 @@ const spawnAgentNpc = (sessionId: string): void => {
     const parent = agentStore.sessions.get(session.parentSessionId);
     const parentName = parent?.nameTag ?? 'Agent';
     ch.nameTag = subagentNameTag(parentName);
+    ch.sessionEmoji = emojiStore.getSessionEmoji(sessionId);
+    ch.enqueueCommand({ type: 'wander' });
+    const handle = createNpcHandle(ch, sessionId);
+    externalNpcSessions.set(ch.id, sessionId);
+    agentStore.registerNpc(sessionId, ch.id, handle);
+    if (session.prompt) {
+      handle.showBubble(truncate(session.prompt, 80), 'speech', true);
+    }
+    debugLog(sessionId, 'NPC_SPAWN', `npcId=${ch.id} door=${agentDoor.type}`);
   } else {
-    soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
-    emojiStore.assignSessionEmoji(sessionId);
+    const meta = await getSessionMetadata(sessionId);
+    const restoredDef = meta
+      ? (characterStore.getCharacter(meta.characterDefinitionId) ?? undefined)
+      : undefined;
+    const ch = spawnFromDoor(agentDoor, 'external', restoredDef);
+    ch.debugSessionId = sessionId;
+    const spawnedDef = characterStore.getCharacter(ch.characterDefinitionId);
+    soundStore.assignSessionPack(
+      sessionId,
+      spawnedDef?.preferredPacks ?? [],
+      meta?.packId ?? undefined,
+    );
+    emojiStore.assignSessionEmoji(sessionId, undefined, meta?.emoji);
     if (session?.nameTag) {
       ch.nameTag = session.nameTag;
     }
+    ch.sessionEmoji = emojiStore.getSessionEmoji(sessionId);
+    ch.enqueueCommand({ type: 'wander' });
+    const handle = createNpcHandle(ch, sessionId);
+    externalNpcSessions.set(ch.id, sessionId);
+    agentStore.registerNpc(sessionId, ch.id, handle);
+    void saveSessionMetadata({
+      sessionId,
+      emoji: emojiStore.getSessionEmoji(sessionId) ?? '',
+      packId: soundStore.getSessionPack(sessionId) ?? null,
+      characterDefinitionId: ch.characterDefinitionId,
+    });
+    debugLog(sessionId, 'NPC_SPAWN', `npcId=${ch.id} door=${agentDoor.type}`);
   }
-  ch.sessionEmoji = emojiStore.getSessionEmoji(sessionId);
-  ch.enqueueCommand({ type: 'wander' });
-  const handle = createNpcHandle(ch, sessionId);
-  externalNpcSessions.set(ch.id, sessionId);
-  agentStore.registerNpc(sessionId, ch.id, handle);
-  if (session?.parentSessionId && session.prompt) {
-    handle.showBubble(truncate(session.prompt, 80), 'speech', true);
-  }
-  debugLog(
-    sessionId, 'NPC_SPAWN',
-    `npcId=${ch.id} door=${agentDoor.type}`,
-  );
 };
 
 const focusOnSessionNpc = (
@@ -729,7 +745,7 @@ const handleAgentEvent = async (rawJson: string): Promise<void> => {
       `type=${event.type} → action=${result.action}`,
     );
     if (result.action === 'spawn' || result.action === 'respawn') {
-      spawnAgentNpc(result.sessionId);
+      await spawnAgentNpc(result.sessionId);
       void agentStore.ensurePromptFields(result.sessionId);
     }
     if (result.action === 'cancel_dismiss') {
@@ -752,7 +768,7 @@ const handleAgentEvent = async (rawJson: string): Promise<void> => {
       const session = agentStore.sessions.get(result.sessionId)!;
       session.driver.detach();
       session.npcId = null;
-      spawnAgentNpc(result.sessionId);
+      await spawnAgentNpc(result.sessionId);
     }
     const needsApproval = event.type === 'permission_wait';
     if (needsApproval) {
@@ -1996,7 +2012,7 @@ onMounted(async () => {
 
   const staleSessionIds = agentStore.detachAllNpcs();
   for (const sessionId of staleSessionIds) {
-    spawnAgentNpc(sessionId);
+    void spawnAgentNpc(sessionId).catch(console.error);
   }
 
   const onKey = (e: KeyboardEvent) => {

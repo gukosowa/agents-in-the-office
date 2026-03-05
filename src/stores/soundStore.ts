@@ -380,8 +380,16 @@ export const useSoundStore = defineStore('sound', () => {
     return sessionPacks.get(sessionId);
   }
 
-  function assignSessionPack(sessionId: string, preferredPacks: string[]): void {
+  function assignSessionPack(
+    sessionId: string,
+    preferredPacks: string[],
+    forcedPackId?: string,
+  ): void {
     if (sessionPacks.has(sessionId)) return; // pack is fixed for the session's lifetime
+    if (forcedPackId) {
+      sessionPacks.set(sessionId, forcedPackId);
+      return;
+    }
     const pool = preferredPacks.length > 0 ? preferredPacks : config.value.activePacks;
     if (pool.length === 0) return;
     const chosen = pool[Math.floor(Math.random() * pool.length)];

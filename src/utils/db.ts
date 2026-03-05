@@ -13,6 +13,13 @@ interface EventRecord {
   event: AgentEvent;
 }
 
+interface SessionMetadataRecord {
+  sessionId: string;
+  emoji: string;
+  packId: string | null;
+  characterDefinitionId: string;
+}
+
 interface AgentsInTheOfficeDB extends DBSchema {
   autoTileLibrary: {
     key: number;
@@ -26,10 +33,14 @@ interface AgentsInTheOfficeDB extends DBSchema {
       'by-session-timestamp': [string, number];
     };
   };
+  'session-metadata': {
+    key: string;
+    value: SessionMetadataRecord;
+  };
 }
 
 const DB_NAME = 'agents-in-the-office-db';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 export async function initDB() {
   return openDB<AgentsInTheOfficeDB>(DB_NAME, DB_VERSION, {
@@ -48,7 +59,11 @@ export async function initDB() {
         eventStore.createIndex('by-session-timestamp',
           ['sessionId', 'timestamp']);
       }
-      if (oldVersion >= 6) return;
+      if (oldVersion >= 6 && oldVersion < 7) {
+        db.createObjectStore('session-metadata', { keyPath: 'sessionId' });
+        return;
+      }
+      if (oldVersion >= 7) return;
       const raw = db as unknown as IDBDatabase;
       if (raw.objectStoreNames.contains('maps')) {
         raw.deleteObjectStore('maps');
@@ -56,6 +71,7 @@ export async function initDB() {
       if (raw.objectStoreNames.contains('characters')) {
         raw.deleteObjectStore('characters');
       }
+      db.createObjectStore('session-metadata', { keyPath: 'sessionId' });
     },
   });
 }
@@ -129,3 +145,22 @@ export async function pruneOldEvents(maxAgeMs: number): Promise<void> {
   await tx.done;
 }
 
+export async function saveSessionMetadata(record: {
+  sessionId: string;
+  emoji: string;
+  packId: string | null;
+  characterDefinitionId: string;
+}): Promise<void> {
+  const db = await initDB();
+  await db.put('session-metadata', record);
+}
+
+export async function getSessionMetadata(sessionId: string): Promise<{
+  sessionId: string;
+  emoji: string;
+  packId: string | null;
+  characterDefinitionId: string;
+} | undefined> {
+  const db = await initDB();
+  return db.get('session-metadata', sessionId);
+}

@@ -58,8 +58,17 @@ export const useEmojiStore = defineStore('emoji', () => {
     return sessionEmojis.value.get(sessionId);
   }
 
-  function assignSessionEmoji(sessionId: string, parentSessionId?: string): void {
+  function assignSessionEmoji(
+    sessionId: string,
+    parentSessionId?: string,
+    forcedEmoji?: string,
+  ): void {
     if (sessionEmojis.value.has(sessionId)) return;
+
+    if (forcedEmoji) {
+      sessionEmojis.value.set(sessionId, forcedEmoji);
+      return;
+    }
 
     if (parentSessionId) {
       const parentEmoji = sessionEmojis.value.get(parentSessionId);
