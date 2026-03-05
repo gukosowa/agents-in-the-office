@@ -9,6 +9,7 @@ import {
 } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   mkdir,
@@ -62,10 +63,15 @@ onMounted(async () => {
       } catch { /* ignore parse errors */ }
     },
   );
+  previewEndedUnlisten = await listen('preview-ended', () => {
+    previewFile.value = null;
+  });
 });
 
 onUnmounted(() => {
   if (agentEventUnlisten) agentEventUnlisten();
+  if (previewEndedUnlisten) previewEndedUnlisten();
+  void invoke('stop_preview');
   if (flashTimeout) clearTimeout(flashTimeout);
   if (importErrorTimeout) clearTimeout(importErrorTimeout);
   if (dragCleanup) dragCleanup();
@@ -415,7 +421,6 @@ function hasAssignments(eventType: AgentEventType): boolean {
 }
 
 // ---- Sound preview (left column) ----
-let previewSource: AudioBufferSourceNode | null = null;
 const previewFile = ref<string | null>(null);
 const soundFileExists = ref<Map<string, boolean>>(new Map());
 const hoveredSoundFile = ref<string | null>(null);
@@ -435,10 +440,7 @@ async function checkSoundFileExistence(packName: string): Promise<void> {
 }
 
 function stopPreview(): void {
-  if (previewSource) {
-    try { previewSource.stop(); } catch { /* already stopped */ }
-    previewSource = null;
-  }
+  void invoke('stop_preview');
   previewFile.value = null;
 }
 
@@ -447,26 +449,16 @@ async function playPreview(filename: string): Promise<void> {
   stopPreview();
   const baseDir = soundStore.getSoundPacksDir();
   const filePath = `${baseDir}/${selectedPack.value}/${filename}`;
-  const buffer = await soundStore.loadBuffer(filePath);
-  if (!buffer) return;
-  const ctx = soundStore.getOrCreateAudioContext();
   const sound = selectedPackInfo.value?.manifest.sounds.find((s) => s.file === filename);
-  const gainNode = ctx.createGain();
-  gainNode.gain.value =
-    soundStore.config.globalVolume * soundStore.effectiveVolume(selectedPack.value, filename, sound);
-  gainNode.connect(ctx.destination);
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(gainNode);
+  const vol = soundStore.config.globalVolume
+    * soundStore.effectiveVolume(selectedPack.value, filename, sound);
   previewFile.value = filename;
-  previewSource = source;
-  source.onended = () => {
-    if (previewFile.value === filename) {
-      previewFile.value = null;
-      previewSource = null;
-    }
-  };
-  source.start();
+  try {
+    await invoke('play_preview', { path: filePath, volume: vol });
+  } catch (err) {
+    console.warn('[SoundsDialog] play_preview failed:', err);
+    previewFile.value = null;
+  }
 }
 
 async function updateSoundVolume(sound: PackManifestSound, volume: number): Promise<void> {
@@ -529,7 +521,6 @@ const draggingChip = ref<{ file: string; event: AgentEventType } | null>(null);
 const dragOverSoundFile = ref<string | null>(null);
 
 const eventsScrollContainer = ref<HTMLElement | null>(null);
-const soundsScrollContainer = ref<HTMLElement | null>(null);
 
 let dragCleanup: (() => void) | null = null;
 
@@ -787,6 +778,7 @@ async function reassignChip(
 const flashingEvent = ref<AgentEventType | null>(null);
 let flashTimeout: ReturnType<typeof setTimeout> | null = null;
 let agentEventUnlisten: UnlistenFn | null = null;
+let previewEndedUnlisten: UnlistenFn | null = null;
 
 function flashEventRow(eventType: AgentEventType): void {
   flashingEvent.value = eventType;
@@ -1060,7 +1052,7 @@ watch(selectedPack, async (packName) => {
                   @click="openAddFilePicker"
                 >Add file</button>
               </div>
-              <div ref="soundsScrollContainer" class="flex-1 overflow-y-auto relative">
+              <div class="flex-1 overflow-y-auto relative">
                 <!-- Audio file drop overlay -->
                 <div
                   v-if="audioDragOver && selectedPack"

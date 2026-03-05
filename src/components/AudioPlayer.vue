@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useSoundStore } from '../stores/soundStore';
 
 const props = defineProps<{
@@ -41,65 +44,28 @@ const volume = computed({
 });
 
 // ---- Playback state ----
-type PlayState = 'stopped' | 'playing' | 'paused';
-const playState = ref<PlayState>('stopped');
-let buffer: AudioBuffer | null = null;
-let source: AudioBufferSourceNode | null = null;
-let gainNode: GainNode | null = null;
-
-async function loadBuffer(): Promise<AudioBuffer | null> {
-  if (buffer) return buffer;
-  const loaded = await soundStore.loadBuffer(props.filePath);
-  if (loaded) buffer = loaded;
-  return buffer;
-}
-
-function detachSource() {
-  if (source) {
-    source.onended = null;
-    try { source.stop(); } catch { /* already stopped */ }
-    source.disconnect();
-    source = null;
-  }
-  if (gainNode) {
-    gainNode.disconnect();
-    gainNode = null;
-  }
-}
+const isPlaying = ref(false);
+let previewEndedUnlisten: UnlistenFn | null = null;
 
 async function play() {
-  const buf = await loadBuffer();
-  if (!buf) return;
-
-  const ctx = soundStore.getOrCreateAudioContext();
-  if (ctx.state === 'suspended') await ctx.resume();
-
-  detachSource();
-
-  gainNode = ctx.createGain();
-  gainNode.gain.value = trackCfg.value.volume;
-  gainNode.connect(ctx.destination);
-
-  source = ctx.createBufferSource();
-  source.buffer = buf;
-  source.connect(gainNode);
-  source.onended = () => {
-    if (playState.value === 'playing') playState.value = 'stopped';
-  };
-
-  source.start(0, 0);
-  playState.value = 'playing';
-}
-
-async function pause() {
-  if (playState.value !== 'playing') return;
-  detachSource();
-  playState.value = 'paused';
+  stop();
+  isPlaying.value = true;
+  try {
+    await invoke('play_preview', {
+      path: props.filePath,
+      volume: trackCfg.value.volume,
+    });
+  } catch (err) {
+    console.warn('[AudioPlayer] play_preview failed:', err);
+    isPlaying.value = false;
+  }
 }
 
 function stop() {
-  detachSource();
-  playState.value = 'stopped';
+  if (isPlaying.value) {
+    void invoke('stop_preview');
+    isPlaying.value = false;
+  }
 }
 
 const displayName = computed(() => {
@@ -107,8 +73,15 @@ const displayName = computed(() => {
   return name.length > 30 ? `${name.slice(0, 27)}...` : name;
 });
 
+onMounted(async () => {
+  previewEndedUnlisten = await listen('preview-ended', () => {
+    isPlaying.value = false;
+  });
+});
+
 onBeforeUnmount(() => {
   stop();
+  if (previewEndedUnlisten) previewEndedUnlisten();
 });
 </script>
 
@@ -134,14 +107,14 @@ onBeforeUnmount(() => {
       ▶
     </button>
 
-    <!-- Pause button -->
+    <!-- Stop button -->
     <button
       class="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-300"
-      :class="playState !== 'playing' ? 'opacity-30' : ''"
-      title="Pause"
-      @click="pause"
+      :class="!isPlaying ? 'opacity-30' : ''"
+      title="Stop"
+      @click="stop"
     >
-      ⏸
+      ⏹
     </button>
 
     <!-- Volume slider -->

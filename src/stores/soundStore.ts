@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { homeDir } from '@tauri-apps/api/path';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import {
   readTextFile,
   writeTextFile,
@@ -110,7 +112,7 @@ function migrateTracksToSoundOverrides(
   return overrides;
 }
 
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav', '.flac', '.m4a', '.webm']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav', '.flac', '.m4a']);
 
 function hasAudioExtension(filename: string): boolean {
   const dot = filename.lastIndexOf('.');
@@ -127,12 +129,6 @@ export const useSoundStore = defineStore('sound', () => {
 
   let soundPacksDir = '';
   let configPath = '';
-
-  // AudioContext — lazy init on first playback
-  let audioCtx: AudioContext | null = null;
-
-  // Buffer cache: absolute file path → AudioBuffer
-  const bufferCache = new Map<string, AudioBuffer>();
 
   // Per-category cooldown timestamps (category → last played ms)
   const cooldownMap = new Map<string, number>();
@@ -180,6 +176,11 @@ export const useSoundStore = defineStore('sound', () => {
       config.value = { ...DEFAULT_CONFIG, soundOverrides: {} };
       await saveConfig();
     }
+
+    // Listen for sound-ended from Rust to reset playing flag
+    await listen('sound-ended', () => {
+      playing = false;
+    });
   }
 
   async function saveConfig(): Promise<void> {
@@ -389,34 +390,7 @@ export const useSoundStore = defineStore('sound', () => {
   }
 
   // -------------------------------------------------------------------------
-  // AudioContext helpers
-  // -------------------------------------------------------------------------
-
-  function getAudioContext(): AudioContext {
-    if (!audioCtx) {
-      audioCtx = new AudioContext();
-    }
-    return audioCtx;
-  }
-
-  async function loadBuffer(filePath: string): Promise<AudioBuffer | null> {
-    const cached = bufferCache.get(filePath);
-    if (cached !== undefined) return cached;
-
-    try {
-      const bytes = await readFile(filePath);
-      const ctx = getAudioContext();
-      const buffer = await ctx.decodeAudioData(bytes.buffer as ArrayBuffer);
-      bufferCache.set(filePath, buffer);
-      return buffer;
-    } catch (err) {
-      console.warn(`[soundStore] Failed to decode audio: ${filePath}`, err);
-      return null;
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Playback engine
+  // Playback engine (delegates to Rust/rodio via Tauri commands)
   // -------------------------------------------------------------------------
 
   async function playForEvent(event: AgentEvent): Promise<void> {
@@ -479,42 +453,22 @@ export const useSoundStore = defineStore('sound', () => {
       return;
     }
 
-    const buffer = await loadBuffer(filePath);
-    if (!buffer) return;
-
     const manifestSound = manifestSoundMap.get(chosenFile);
     const vol = effectiveVolume(packName, chosenFile, manifestSound);
-    const ctx = getAudioContext();
-
-    const gainNode = ctx.createGain();
-    gainNode.gain.value = config.value.globalVolume * vol;
-    gainNode.connect(ctx.destination);
-
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gainNode);
 
     playing = true;
     cooldownMap.set(category, now);
     lastPlayedSessionId.value = event.sessionId;
 
-    source.onended = () => {
+    try {
+      await invoke('play_sound', {
+        path: filePath,
+        volume: config.value.globalVolume * vol,
+      });
+    } catch (err) {
+      console.warn(`[soundStore] play_sound failed:`, err);
       playing = false;
-    };
-
-    source.start();
-  }
-
-  // -------------------------------------------------------------------------
-  // Public AudioContext access (for AudioPlayer.vue)
-  // -------------------------------------------------------------------------
-
-  function getOrCreateAudioContext(): AudioContext {
-    return getAudioContext();
-  }
-
-  function getBufferCache(): Map<string, AudioBuffer> {
-    return bufferCache;
+    }
   }
 
   return {
@@ -532,9 +486,6 @@ export const useSoundStore = defineStore('sound', () => {
     isEnabled,
     getSoundPacksDir,
     playForEvent,
-    getOrCreateAudioContext,
-    getBufferCache,
-    loadBuffer,
     getSessionPack,
     assignSessionPack,
   };

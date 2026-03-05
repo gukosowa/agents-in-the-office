@@ -587,14 +587,22 @@ const spawnAgentNpc = (sessionId: string): void => {
   );
   ch.debugSessionId = sessionId;
   const spawnedDef = characterStore.getCharacter(ch.characterDefinitionId);
-  soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
   if (session?.parentSessionId) {
+    const parentPack = soundStore.getSessionPack(session.parentSessionId);
+    if (parentPack) {
+      soundStore.assignSessionPack(sessionId, [parentPack]);
+    } else {
+      soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
+    }
     ch.badge = '🐔';
     const parent = agentStore.sessions.get(session.parentSessionId);
     const parentName = parent?.nameTag ?? 'Agent';
     ch.nameTag = subagentNameTag(parentName);
-  } else if (session?.nameTag) {
-    ch.nameTag = session.nameTag;
+  } else {
+    soundStore.assignSessionPack(sessionId, spawnedDef?.preferredPacks ?? []);
+    if (session?.nameTag) {
+      ch.nameTag = session.nameTag;
+    }
   }
   ch.enqueueCommand({ type: 'wander' });
   const handle = createNpcHandle(ch, sessionId);

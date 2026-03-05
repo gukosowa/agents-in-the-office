@@ -1,3 +1,4 @@
+mod audio;
 mod transcript;
 mod watcher;
 
@@ -122,6 +123,9 @@ pub fn run() {
             transcript::start_transcript_poll,
             transcript::stop_transcript_poll,
             transcript::read_initial_prompt,
+            audio::play_sound,
+            audio::play_preview,
+            audio::stop_preview,
         ])
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
@@ -169,6 +173,11 @@ pub fn run() {
             if first_launch {
                 let _ = win.maximize();
             }
+
+            let audio_handle = audio::init_output_stream();
+            app.manage(std::sync::Mutex::new(
+                audio::AudioState::new(audio_handle),
+            ));
 
             watcher::start_watcher(app.handle());
             Ok(())
