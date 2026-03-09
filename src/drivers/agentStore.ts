@@ -370,7 +370,7 @@ export const useAgentStore = defineStore('agent', () => {
         return [{ action: 'update', sessionId }];
       }
 
-      const needsRespawn = !session.npcId;
+      const needsRespawn = !session.npcId && !session.parentSessionId;
       const hasHandle = !!session.npcId;
       debugLog(
         sessionId, 'STORE_ROUTE',

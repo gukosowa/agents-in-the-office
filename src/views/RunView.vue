@@ -933,6 +933,14 @@ const update = (time: number) => {
             if (selectedSessionId.value === sessionId) {
               selectedSessionId.value = null;
             }
+            for (const [subNpcId, subSid] of externalNpcSessions) {
+              const subSess = agentStore.sessions.get(subSid);
+              if (subSess?.parentSessionId !== sessionId) continue;
+              const subCh = characters.find(c => c.id === subNpcId);
+              if (subCh && subCh.state !== 'exited') {
+                subCh.enqueueCommand({ type: 'leave_room' });
+              }
+            }
             agentStore.removeSession(sessionId);
           }
           emojiStore.removeSessionEmoji(sessionId);

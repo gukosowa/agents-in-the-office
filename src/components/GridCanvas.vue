@@ -2549,7 +2549,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
         editorStore.setSelectedAutoTile({ autoTileIndex: next.i });
         return;
       }
-      case 'y': {
+      case 'z': {
         const loadedSlots = Object.keys(mapStore.tilesetPool)
           .sort()
           .filter((k) => mapStore.tilesetPool[k]?.image !== null);
